@@ -7,8 +7,10 @@ import { StandardsPage } from './pages/StandardsPage';
 import { AboutPage } from './pages/AboutPage';
 import { AccessibilityPage, PrivacyPage, TermsPage } from './pages/LegalPages';
 import { NotFoundPage, RouteErrorPage } from './pages/ErrorPages';
+import { ProfilePage } from './pages/ProfilePage';
+import { DashboardPage } from './pages/DashboardPage';
 
-/** Public routes only. Sign-in, onboarding, signed-in and employer pages are not built yet (see DESIGN.md). */
+/** Sign-in, onboarding and employer pages are not built yet (see DESIGN.md). Profile and dashboard use a profile token, not accounts. */
 export const routes: RouteObject[] = [
   {
     path: '/',
@@ -18,6 +20,8 @@ export const routes: RouteObject[] = [
       { index: true, element: <LandingPage /> },
       { path: 'opportunities', element: <OpportunitiesPage /> },
       { path: 'opportunities/:id', element: <OpportunityDetailPage /> },
+      { path: 'profile', element: <ProfilePage /> },
+      { path: 'dashboard', element: <DashboardPage /> },
       { path: 'standards', element: <StandardsPage /> },
       { path: 'about', element: <AboutPage /> },
       { path: 'privacy', element: <PrivacyPage /> },

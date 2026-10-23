@@ -1,10 +1,15 @@
 import { Link, NavLink } from 'react-router';
+import { MEMBER_PAGES_ENABLED } from '../lib/features';
 
 const NAV = [
   { to: '/opportunities', label: 'Opportunities', index: '01' },
   { to: '/#how-it-works', label: 'How it works', index: '02' },
   { to: '/#sectors', label: 'Sectors', index: '03' },
   { to: '/about', label: 'About', index: '04' },
+];
+
+const MEMBER_NAV = [
+  { to: '/dashboard', label: 'My matches', index: '05' },
 ];
 
 export function Wordmark({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
@@ -29,7 +34,7 @@ export function SiteHeader() {
         <Wordmark />
 
         <nav aria-label="Main" className="hidden items-center gap-8 text-[13px] font-medium tracking-wide text-blue-100 md:flex">
-          {NAV.map((item) => (
+          {[...NAV, { to: '/profile', label: 'Profile', index: '06' }, ...(MEMBER_PAGES_ENABLED ? MEMBER_NAV : [])].map((item) => (
             <NavLink
               key={item.label}
               to={item.to}
@@ -47,6 +52,15 @@ export function SiteHeader() {
         >
           Explore directory
         </Link>
+
+        {MEMBER_PAGES_ENABLED && (
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center justify-center rounded-full bg-blue-200 px-4 py-2 text-xs font-semibold tracking-wide text-accent-blue ring-1 ring-blue-200/40 transition-colors hover:bg-ink-900 focus-visible:outline-blue-200"
+          >
+            My dashboard
+          </Link>
+        )}
       </div>
     </header>
   );

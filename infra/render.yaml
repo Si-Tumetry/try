@@ -1,6 +1,12 @@
-# Render Blueprint for the web front end. The API, worker, beat, Postgres and
-# Key Value services are added here when the backend is ready to deploy
-# (see ARCHITECTURE.md §3).
+# Render Blueprint for NextStep.
+#
+# Live now:   ypp-web   the React site (static). Deployable as it stands.
+# Blocked:    ypp-api   the REST API. It refuses to start in production until the
+#                       Postgres store exists. The block at the bottom is ready to
+#                       enable once it does. See docs/DEPLOYMENT.md for the checklist.
+#
+# Before the first deploy, replace the API host in the /v1/* rewrite below. The
+# placeholder ends in .invalid so it cannot resolve to anyone else's server.
 services:
   - type: web
     name: ypp-web
@@ -9,16 +15,32 @@ services:
     buildCommand: npm install -g pnpm@12.15.0 && pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: ./dist
     routes:
+      # The API is served from the same origin as the site, so connect-src 'self' holds.
+      # This rule must stay above the single-page fallback below.
+      - type: rewrite
+        source: /v1/*
+        destination: https://accounts.google.com/api/v1/*
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: VITE_MEMBER_PAGES
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: APP_ENV
+        value: production
+      # Google sign-in
+      - key: GOOGLE_CLIENT_ID
+        value: .env.GOOGLE_CLIENT_ID
+      - key: GOOGLE_CLIENT_SECRET
+        value: .env.GOOGLE_CLIENT_SECRET
     headers:
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+        value: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'"
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
@@ -27,7 +49,28 @@ services:
         value: strict-origin-when-cross-origin
       - path: /*
         name: Permissions-Policy
-        value: "camera=(), microphone=(), geolocation=()"
+        value: "camera=(), microphone=(), geolocation=(), payment=()"
       - path: /*
         name: Strict-Transport-Security
         value: "max-age=31536000; includeSubDomains"
+
+# --- ypp-api: enable when the Postgres store is built (DATABASE.md) ---------------
+#  - type: web
+#    name: ypp-api
+#    runtime: python
+#    rootDir: backend
+#    plan: starter
+#    buildCommand: pip install -r requirements.txt
+#    startCommand: uvicorn api.asgi:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+#    healthCheckPath: /v1/health
+#    envVars:
+#      - key: PYTHON_VERSION
+#        value: "3.14"
+#      - key: APP_ENV
+#        value: production
+#      - key: DATABASE_URL
+#        sync: false
+#      - key: LLM_PROVIDER
+#        value: none
+#      - key: EMBEDDING_PROVIDER
+#        value: none

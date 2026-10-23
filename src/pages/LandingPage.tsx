@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { CountryTags, ScopeTag, WorkModeTag } from '../components/EligibilityTag';
 import { ArrowRightIcon, SearchIcon } from '../components/Icon';
 import { PhotoBand } from '../components/PhotoBand';
+import { MEMBER_PAGES_ENABLED } from '../lib/features';
 import { Section } from '../components/Section';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOpportunities } from '../hooks/useOpportunities';
@@ -304,6 +305,14 @@ export function LandingPage() {
             >
               Browse listings
             </Link>
+            {MEMBER_PAGES_ENABLED && (
+              <Link
+                to="/profile"
+                className="inline-flex items-center justify-center rounded-full border border-blue-200/60 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10 focus-visible:outline-blue-200"
+              >
+                Upload my CV for scored matches
+              </Link>
+            )}
             <Link
               to="/standards"
               className="inline-flex items-center justify-center rounded-full border border-blue-200/60 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10 focus-visible:outline-blue-200"

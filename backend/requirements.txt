@@ -2,6 +2,15 @@
 # Do not move to mcp>=2 without updating mcp_server/ (v2 renamed FastMCP to MCPServer).
 mcp>=1.20,<2
 
+# REST API under /v1 (api/): CV upload and form parsing, PDF text extraction.
+python-multipart>=0.0.9
+pypdf>=6.0
+
+# Postgres store (DATABASE.md) and Google sign-in (api/google.py).
+psycopg[binary,pool]>=3.2
+google-auth>=2.35
+requests>=2.32
+
 # Test
 pytest>=8
 pytest-asyncio>=0.24

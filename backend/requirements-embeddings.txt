@@ -1,0 +1,8 @@
+# Optional. Needed only when EMBEDDING_PROVIDER=local (the default).
+#
+# Install torch first, from the CPU index. The Render workers and dev machines do not need CUDA:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+#
+# Then install this file:
+#   pip install -r requirements-embeddings.txt
+sentence-transformers>=6.2,<7

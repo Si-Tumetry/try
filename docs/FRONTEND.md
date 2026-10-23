@@ -11,12 +11,16 @@ The web app is a React single-page application at the root of the repository. It
 | `/` | Landing | Listings snapshot (counts, featured roles) |
 | `/opportunities` | Directory with filters, sort and paging | Listings snapshot |
 | `/opportunities/:id` | Opportunity detail | Listings snapshot |
+| `/profile` | Upload a CV, see the skills found, update or delete the profile | REST API (`/v1/profiles`, `/v1/me/profile`) |
+| `/dashboard` | Jobs ranked by score, with matching skills and gaps | REST API (`/v1/me/matches`) |
 | `/standards` | How listings are checked | Static |
 | `/about` | About, with directory counts | Listings snapshot |
 | `/privacy`, `/terms`, `/accessibility` | Draft legal pages | Static |
 | `*` | Not found | None |
 
-Not built yet, and designed in [DESIGN.md](../DESIGN.md): sign-in and sign-up, onboarding, my profile and matches, privacy controls, and every employer page. These need authentication and the REST API first.
+Profile and dashboard use a profile token kept in the browser, not accounts. See [PROFILES.md](PROFILES.md).
+
+Not built yet, and designed in [DESIGN.md](../DESIGN.md): sign-in and sign-up, onboarding, privacy controls, and every employer page. These need real authentication first.
 
 ## 2. Stack
 
@@ -60,6 +64,8 @@ The Tailwind CDN in the design sample is not used. It loads script from outside 
 │   ├── pages/
 │   │   ├── Layout.tsx          Skip link, header, main outlet, footer
 │   │   ├── LandingPage.tsx
+│   │   ├── ProfilePage.tsx     CV upload, skills, update and delete
+│   │   ├── DashboardPage.tsx   Matches with scores, gaps and next projects
 │   │   ├── OpportunitiesPage.tsx
 │   │   ├── OpportunityDetailPage.tsx
 │   │   ├── StandardsPage.tsx
@@ -77,6 +83,9 @@ The Tailwind CDN in the design sample is not used. It loads script from outside 
 │   │   ├── EligibilityTag.tsx  Scope, work-mode and country tags
 │   │   └── Icon.tsx
 │   ├── lib/
+│   │   ├── api.ts              REST client for /v1 (typed responses, ApiError)
+│   │   ├── session.ts          Profile token in localStorage
+│   │   ├── matching.ts         Band labels, availability, countries, score filters
 │   │   ├── opportunities.ts    Types, labels, filter, sort, stats, loader and cache
 │   │   ├── opportunities.test.ts
 │   │   ├── sectors.ts          Sector definitions and matching
@@ -205,6 +214,7 @@ Run `pnpm typecheck && pnpm test && pnpm build` before merging frontend changes.
 |---|---|
 | `src/lib/opportunities.test.ts` | Each filter and combinations; country matching; search terms; sorting and no mutation; country list; directory stats; listing ids; expiry; sector counts |
 | `src/App.test.tsx` | Landing counts, featured roles, hero search hand-off, no unverified figures; directory paging, sector from URL, search and clear, card links, error state; detail content, expired posting, not found; standards labels; draft legal notice; 404 |
+| `src/pages/ProfileDashboard.test.tsx` | Dashboard without a token; server order, scores and gaps; the score filter sends the right query; an expired token ends the session; the empty state; creating a profile; a rejected CV shows the server's message |
 
 Route tests use `createMemoryRouter` with the real route table and a stubbed `fetch`. The snapshot cache is cleared between tests.
 
@@ -216,11 +226,12 @@ Route tests use `createMemoryRouter` with the real route table and a stubbed `fe
 
 - **Build:** installs pnpm 12.15.0, then `pnpm install --frozen-lockfile && pnpm build`.
 - **Publish:** `./dist`.
-- **Rewrite:** `/*` to `/index.html`, so deep links such as `/opportunities/…` load the app. Without this, a refresh on a deep link returns 404.
+- **Rewrites:** `/v1/*` goes to the API host, so the API is same-origin and `connect-src 'self'` holds. It points at a placeholder `.invalid` host until the API is deployed. `/*` goes to `/index.html`, so deep links such as `/opportunities/…` load the app. Without that, a refresh on a deep link returns 404.
+- **Feature switch:** `VITE_MEMBER_PAGES` (default off) shows the "My matches" link and the CV call to action. The routes exist either way.
 - **Node:** `NODE_VERSION` 22.
 - **Headers:** `Content-Security-Policy`, `Strict-Transport-Security` (one year, `includeSubDomains`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and a `Permissions-Policy` that disables camera, microphone and geolocation.
 
-When the API is added, its origin must go into `connect-src`.
+The profile and dashboard pages call `/v1`. In development Vite proxies it to the API on port 8000. In production, serve the API from the same origin under `/v1`, or add its origin to `connect-src`. The API is not deployed yet (see [PROFILES.md](PROFILES.md) §4 before putting it in front of members).
 
 ## 12. Decisions
 

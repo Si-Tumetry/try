@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from collections.abc import Iterable
 from functools import lru_cache
 
@@ -51,3 +52,12 @@ def skill_mentions(text: str, skills: Iterable[Skill]) -> list[Skill]:
     slugs = {owner[m.group(1)] for m in pattern.finditer(text.lower())}
     by_slug = {s.slug: s for s in skills_t}
     return sorted((by_slug[slug] for slug in slugs), key=lambda s: s.slug)
+
+
+def skill_mention_counts(text: str, skills: Iterable[Skill]) -> Counter[str]:
+    """How many times each skill (by slug) is named in the text."""
+    skills_t = tuple(skills)
+    if not skills_t or not text:
+        return Counter()
+    pattern, owner = _matcher_for(skills_t)
+    return Counter(owner[m.group(1)] for m in pattern.finditer(text.lower()))

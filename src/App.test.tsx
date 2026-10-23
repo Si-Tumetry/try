@@ -148,6 +148,14 @@ describe('site routes', () => {
       expect(await screen.findByRole('note')).toHaveTextContent('Draft.');
     });
 
+    it('keeps member pages out of navigation until they are switched on', async () => {
+      renderAt('/');
+
+      await screen.findByRole('heading', { level: 1, name: /step into work/i });
+      expect(screen.queryByRole('link', { name: 'My matches' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /upload my cv/i })).not.toBeInTheDocument();
+    });
+
     it('renders a not-found page for unknown addresses', async () => {
       renderAt('/no-such-page');
 
