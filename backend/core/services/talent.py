@@ -3,7 +3,7 @@ from datetime import date
 from typing import Any, TypeVar
 
 from core.actor import Actor
-from core.config import SUPPORTED_COUNTRIES, SearchConfig
+from core.config import SearchConfig
 from core.domain import Candidate, Listing, Requirement, Skill
 from core.engine.explain import candidate_view, matched_and_missing, projects_for, skill_rows
 from core.engine.filters import passes_candidate_filters, passes_listing_filters

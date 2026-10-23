@@ -530,11 +530,13 @@ Each tool is a thin wrapper in `mcp_server/app.py` that calls one `TalentService
 | `search_talent` | `query`, `country`, `skills`, `min_score` (default 40), `limit` (default 10, max 25), `rerank` (default true) | `search_talent` | `read:candidates`, role employer, business or admin | 25 results |
 | `score_candidate` | `profile_id`, `query`, `skills`, `country` **(changed from `requirement`, to match the other tools)** | `score_candidate` | `read:candidates`, same roles | 1 result |
 | `get_profile` | `profile_id` | `get_profile` (public fields only) | `read:public` | 1 profile |
-| `search_opportunities` | `profile_id`, `country`, `min_score` (default 40), `limit` | `search_opportunities` | `read:public`, role youth or admin, caller owns the profile | 25 results |
+| `search_opportunities` | `profile_id`, `include_global` (default false), `min_score` (default 40), `limit` | `search_opportunities` | `read:public`, role youth or admin, caller owns the profile | 25 results |
 | `get_skill_gap` | `listing_id`, `profile_id` | `get_skill_gap` | `read:public`, caller owns the profile | all requirement skills |
 | `list_skills` | `query`, `category`, `limit` (max 100) | `list_skills` | `read:public` | 100 skills |
 
-`search_opportunities` takes a `profile_id` only. Matching from free text (`query`) is **not yet built**, because free text has no candidate record to score against.
+`search_opportunities` takes a `profile_id` only. Matching from free text (`query`) is **not yet built**, because free text has no candidate record to score against. By default it returns listings open in the youth's own country (§14.19). `include_global` adds the others, each labelled with its scope and `in_your_country`. The earlier `country` parameter was removed, because a youth can't choose a country they don't live in.
+
+Results are capped at 25 with a `truncated` flag. Paging through the rest is not built yet. It belongs with the cursor pagination in §8.
 
 **Not built yet:**
 
@@ -902,7 +904,7 @@ The demo uses real, public postings, not samples. The snapshot was taken on the 
 | ALX Africa | `alxafrica` | 12 | 6 | Tech education. Roles in ZA, NG and GH. Six have no stated country |
 | One Acre Fund (Kenya) | `oafkenya` | 7 | 7 | Agricultural finance. Kenya roles |
 | One Acre Fund (Global) | `oneacrefundglobal` | 4 | 3 | Roles across East and West Africa, including Kenya and Nigeria |
-| impact.com | `impact` | 79 | 23 | Partnership software. Most roles are outside the region, including some in South Africa |
+| impact.com | `impact` | 79 | 24 | Partnership software. Most roles are outside the region, including some in South Africa |
 
 Counts are from the snapshot taken on `fetched_at`. They will change as the employers post and close roles.
 

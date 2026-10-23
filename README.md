@@ -17,9 +17,19 @@ Success is measured by **verified paid placements and six-month retention**, not
 Built so far:
 
 - Scoring model, RAG engine (hard filters, hybrid candidate generation with RRF, scoring, grounded LLM rerank), and the service layer.
-- MCP server with the six read tools, bearer-token authentication, and 113 tests.
+- MCP server with the six read tools and bearer-token authentication.
+- Opportunity ingestion: a Greenhouse Job Board connector, a location parser that gives each listing its eligible countries and scope, and a demo loader that refuses to run in production.
+- Youth opportunity search defaults to listings open in the youth's country. A global view is available and labelled.
+- 168 tests.
 
-Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters, and OAuth. The engine runs against an in-memory store until the Postgres store exists.
+Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters, OAuth, skill extraction for listings, pagination beyond 25 results, and the scheduled connector. The engine runs against an in-memory store until the Postgres store exists.
+
+Refreshing the demo snapshot from the live Greenhouse boards:
+
+```bash
+cd backend
+YPP_INGEST_CONTACT="you@yourdomain.org" python -m demo.refresh_greenhouse_snapshot
+```
 
 | Document | Purpose |
 |---|---|
@@ -27,6 +37,7 @@ Not built yet: the Django project, REST routes, the Postgres store and migration
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, components, deployment on Render, request flows, decisions |
 | [TECHNICAL.md](TECHNICAL.md) | Implementation detail: services, ingestion and RAG pipelines, scoring, workers |
 | [DATABASE.md](DATABASE.md) | Schema, indexes, constraints, retention, migrations |
+| [FRONTEND.md](FRONTEND.md) | React web app: structure, data, filters, testing, deployment |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Symptom-first diagnostics and fixes |
 
 The source specification is `Youth_Yellow_Pages_Technical_Design.pdf` (version 1 draft). Where these documents go beyond it, the difference is marked as an addition.

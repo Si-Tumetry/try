@@ -172,6 +172,8 @@ class GreenhouseConnector:
             raise GreenhouseError("host not on the allowlist")
         self._throttle()
         response = self._client.get(url)
+        if 300 <= response.status_code < 400:
+            raise GreenhouseError("redirects are not followed")
         if response.status_code == 404:
             raise BoardNotFound(url)
         if response.status_code == 429:
