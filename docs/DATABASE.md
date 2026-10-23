@@ -67,6 +67,7 @@ erDiagram
     oauth_clients ||--o{ oauth_tokens : "issues"
     skill_candidates }o--o| skills : "nearest to"
 
+    attachments ||--o{ evidence : "backs"
     users ||--o{ attachments : "uploads"
     profiles ||--o{ attachments : "linked"
     users ||--o{ ingest_sources : "owns"
@@ -253,7 +254,7 @@ Source: [PDF §3]. Evidence is attached to a profile and optionally to a skill.
 | `type` | `text` | no | | `CHECK (type IN ('project','certificate','assessment','employer_review'))` [PDF §3] |
 | `title` | `text` | no | | Short label **(addition)** |
 | `url` | `text` | yes | | Required for `project` and `certificate` links; `CHECK` for http(s) scheme **(addition)** |
-| `storage_key` | `text` | yes | | Object storage key for uploaded files **(addition)** |
+| `attachment_id` | `uuid` | yes | | FK `attachments.id` for an uploaded file. Only `clean` attachments may be linked **(addition)** |
 | `summary` | `text` | yes | | Summary used in profile document, max 500 characters **(addition)** |
 | `verified` | `boolean` | no | `false` | [PDF §3] |
 | `verification_status` | `text` | no | `'pending'` | `CHECK (verification_status IN ('pending','reachable','verified','rejected','expired'))` **(addition)** |
@@ -268,7 +269,7 @@ Source: [PDF §3]. Evidence is attached to a profile and optionally to a skill.
 Constraints:
 
 - `CHECK (verified = false OR verification_status = 'verified')`
-- `CHECK (type <> 'project' OR url IS NOT NULL OR storage_key IS NOT NULL)`
+- `CHECK (type <> 'project' OR url IS NOT NULL OR attachment_id IS NOT NULL)`
 - `CHECK (url IS NULL OR url ~* '^https?://')`
 
 Indexes:
@@ -683,10 +684,10 @@ Files uploaded by candidates. A file is used only when `scan_status = 'clean'`. 
 | `profile_id` | `uuid` | yes | | FK `profiles.id` ON DELETE CASCADE. Null until linked |
 | `kind` | `text` | no | | `CHECK (kind IN ('cv','certificate','cover_letter','portfolio','linkedin_export','other'))` |
 | `display_name` | `text` | no | | Sanitised client filename, for display only. Max 140 characters |
-| `storage_key` | `text` | no | | Random UUID-based key. Unique |
+| `content` | `bytea` | no | | The file itself, at most 5 MB. Stored in Postgres in phase 1 (ARCHITECTURE.md D10). Cleared when the scan finds the file infected or rejected. `CHECK (length(content) <= 5242880)` |
 | `content_type` | `text` | no | | Set from the detected type, not the client's claim. `CHECK (content_type IN ('application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'))` |
 | `size_bytes` | `integer` | no | | `CHECK (size_bytes > 0 AND size_bytes <= 5242880)` |
-| `sha256` | `text` | no | | Declared by the client and checked against the stored object |
+| `sha256` | `text` | no | | Computed by the server from `content` on upload. If the client sends its own value, it must match |
 | `scan_status` | `text` | no | `'pending'` | `CHECK (scan_status IN ('pending','clean','infected','rejected','error'))` |
 | `extracted_text` | `text` | yes | | CV text for profile extraction. Max 50000 characters. Untrusted data |
 | `created_at` | `timestamptz` | no | `now()` | |
@@ -745,7 +746,7 @@ The second constraint is the database half of the environment guard in TECHNICAL
 |---|---|---|
 | `users`, `profiles` | Soft delete immediately; search excludes at once | Hard delete after 30 days **(addition, pending counsel)** |
 | `profile_skills`, `evidence`, `profile_consents` | Removed with the profile at hard delete | Cascade |
-| Files in object storage | Deleted at hard delete | `purge_deleted` task removes storage keys |
+| Attachment bytes | Removed with the attachment row at hard delete | No separate store to clean. Backups expire on the Render schedule |
 | `matches` | Anonymised: `profile_id` kept, `breakdown` cleared | At hard delete |
 | `contact_requests` | Removed | At hard delete |
 | `audit_log` | Retained for 2 years, `actor_id` kept as an opaque id | Expired by retention job |

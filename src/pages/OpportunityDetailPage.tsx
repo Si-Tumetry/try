@@ -1,10 +1,12 @@
 import { Link, useParams } from 'react-router';
-import { CountryTags, ScopeTag, WorkModeTag } from '../components/EligibilityTag';
+import { ScopeTag, WorkModeTag } from '../components/EligibilityTag';
+import { PhotoBand } from '../components/PhotoBand';
 import { ArrowRightIcon, ArrowUpRightIcon } from '../components/Icon';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOpportunities } from '../hooks/useOpportunities';
 import { formatDate, formatDateTime } from '../lib/format';
 import { findOpportunity, isExpired, type Opportunity } from '../lib/opportunities';
+import { imageForListing } from '../lib/sectors';
 
 function sourceHost(url: string): string {
   try {
@@ -40,35 +42,37 @@ function DetailView({ item }: { item: Opportunity }) {
   const location = item.location_text.trim();
 
   return (
-    <article className="mx-auto max-w-6xl px-6 py-14 lg:px-12">
-      <nav aria-label="Breadcrumb" className="mb-8 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-        <Link to="/opportunities" className="hover:text-ink-900">
-          Directory
-        </Link>
-        <span aria-hidden="true">›</span>
-        <span className="line-clamp-1 text-ink-700">{item.title.trim()}</span>
-      </nav>
+    <article>
+      <PhotoBand image={imageForListing(item)} innerClassName="py-14 md:py-16">
+        <nav aria-label="Breadcrumb" className="mb-8 flex flex-wrap items-center gap-2 text-xs text-blue-200">
+          <Link to="/opportunities" className="rounded-sm hover:text-white focus-visible:outline-blue-200">
+            Directory
+          </Link>
+          <span aria-hidden="true">›</span>
+          <span className="line-clamp-1 text-blue-100">{item.title.trim()}</span>
+        </nav>
 
-      <div className="grid grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0">
-          <p className="mb-3 font-mono text-xs tracking-wider text-ink-500 uppercase">{item.employer}</p>
-          <h1 className="font-serif text-4xl leading-tight font-normal text-ink-900 md:text-5xl">{item.title.trim()}</h1>
+        <p className="mb-3 font-mono text-xs tracking-wider text-blue-200 uppercase">{item.employer}</p>
+        <h1 className="max-w-4xl font-serif text-4xl leading-tight font-normal text-white md:text-5xl">{item.title.trim()}</h1>
 
-          <div className="mt-6 flex flex-wrap items-center gap-2">
-            <WorkModeTag mode={item.work_mode} />
-            <ScopeTag scope={item.scope} />
-            <CountryTags countries={item.eligible_countries} />
-          </div>
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          <WorkModeTag mode={item.work_mode} />
+          <ScopeTag scope={item.scope} />
+        </div>
+      </PhotoBand>
 
-          <div className="mt-12 border-t border-ink-900/10 pt-10">
-            <h2 className="mb-6 font-serif text-2xl font-medium text-ink-900">About this role</h2>
+      <div className="mx-auto max-w-6xl px-6 py-14 lg:px-12">
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="min-w-0">
+          <div className="border-t border-blue-300/60 pt-2">
+              <h2 className="mb-6 font-serif text-2xl font-medium text-ink-900">About this role</h2>
             <Paragraphs text={item.description} />
           </div>
         </div>
 
         <aside aria-label="Listing details" className="space-y-6 lg:sticky lg:top-28 lg:self-start">
           {expired ? (
-            <div role="status" className="rounded-2xl border border-ink-900/15 bg-cream-100 p-6">
+            <div role="status" className="rounded-2xl border border-accent-blue/30 bg-blue-50 p-6">
               <p className="font-semibold text-ink-900">This posting has passed its expiry date.</p>
               <p className="mt-2 text-sm text-ink-600">
                 The employer may have closed it. Check the original posting before you rely on this listing.
@@ -78,12 +82,12 @@ function DetailView({ item }: { item: Opportunity }) {
               </Link>
             </div>
           ) : (
-            <div className="rounded-2xl border border-ink-900/10 bg-white p-6">
+            <div className="rounded-2xl border border-blue-300/60 bg-blue-50 p-6">
               <a
                 href={item.source_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-ink-900 px-6 py-3 text-sm font-semibold tracking-wide text-cream-50 transition-colors hover:bg-accent-blue"
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-accent-navy px-6 py-3 text-sm font-semibold tracking-wide text-white transition-colors hover:bg-accent-blue"
               >
                 Apply on the employer’s site
                 <ArrowUpRightIcon aria-hidden="true" />
@@ -94,7 +98,7 @@ function DetailView({ item }: { item: Opportunity }) {
             </div>
           )}
 
-          <dl className="space-y-5 rounded-2xl border border-ink-900/10 bg-cream-100/50 p-6 text-sm">
+          <dl className="space-y-5 rounded-2xl border border-blue-300/60 bg-blue-50 p-6 text-sm">
             {location && (
               <div>
                 <dt className="font-mono text-xs text-ink-500">Location</dt>
@@ -135,6 +139,7 @@ function DetailView({ item }: { item: Opportunity }) {
             )}
           </dl>
         </aside>
+        </div>
       </div>
     </article>
   );

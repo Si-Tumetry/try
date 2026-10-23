@@ -47,7 +47,10 @@ describe('filterOpportunities', () => {
     const hit = filterOpportunities(fixtureListings, { ...EMPTY_FILTERS, query: '  MONIE analyst ' });
     expect(byId(hit)).toEqual(['101']);
 
-    const miss = filterOpportunities(fixtureListings, { ...EMPTY_FILTERS, query: 'monie intern' });
+    const sameEmployerHit = filterOpportunities(fixtureListings, { ...EMPTY_FILTERS, query: 'monie intern' });
+    expect(byId(sameEmployerHit)).toEqual(['102']);
+
+    const miss = filterOpportunities(fixtureListings, { ...EMPTY_FILTERS, query: 'jumia intern' });
     expect(miss).toEqual([]);
   });
 });

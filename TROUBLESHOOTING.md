@@ -293,8 +293,8 @@ FROM pg_stat_activity WHERE wait_event_type = 'Lock';
 
 **Fix:**
 
-1. Confirm `BEDROCK_EMBED_MODEL_ID` and `EMBEDDING_DIM` in the environment.
-2. For Titan Text Embeddings v2 the dimension is 1024. Set `EMBEDDING_DIM=1024`.
+1. Confirm `EMBEDDING_MODEL` and `EMBEDDING_DIM` in the environment.
+2. For the default model, BAAI/bge-m3, the dimension is 1024. Set `EMBEDDING_DIM=1024`.
 3. Do not change the column dimension in place. Follow the migration plan in [DATABASE.md §10](DATABASE.md#10-embedding-lifecycle).
 
 ---
@@ -335,7 +335,7 @@ The task is idempotent, so re-running it is safe [TECHNICAL §10.2].
 | `schema_validation_failed` | LLM output did not match the JSON schema | Check prompt and model version. Retry after fixing. |
 | `quote_mismatch` | Too many items dropped because `evidence_quote` was not in the input | Input may contain unusual formatting. Check the text was not truncated. |
 | `llm_timeout` | Model call exceeded the time limit | Retry. If repeated, check model status. |
-| `llm_rate_limited` | Bedrock throttled | Lower the `embed` and `ingest` concurrency. |
+| `llm_rate_limited` | The LLM provider throttled the request | Lower the `ingest` concurrency and check the provider's quota. No LLM provider is chosen yet, so this should not occur (TECHNICAL.md §16.2) |
 | `empty_input` | Profile had no text after intake | Ask the user to complete the profile. |
 
 **Retry after fixing the cause:**
@@ -350,19 +350,13 @@ python manage.py shell -c "from core.services.profiles import reextract; reextra
 
 **Symptom:** `status = pending_embedding` for a long time, or search results show `retrieval_channels = keyword_only`.
 
-**Check Bedrock access:**
+**Check the configuration on the worker.** `EMBEDDING_PROVIDER` must be `local` and `EMBEDDING_MODEL` must be `BAAI/bge-m3`. `EMBEDDING_PROVIDER=none` turns embeddings off on purpose, and search then uses keywords only (TECHNICAL.md §16.1).
 
-```bash
-aws bedrock-runtime invoke-model --region "$AWS_REGION" \
-  --model-id "$BEDROCK_EMBED_MODEL_ID" \
-  --body '{"inputText":"test"}' --cli-binary-format raw-in-base64-out /tmp/out.json
-```
+**Check the worker's memory.** The model runs inside `ypp-worker`. If the worker restarts with no application error in its logs, the platform probably killed it for exceeding memory. Check the restart reason on Render, then move the worker to a larger plan. Measure peak memory on staging before choosing a plan.
 
-Expected: exit code 0 and a file with `embedding` of length 1024.
+**Check the vector size.** The model must produce 1024 values, matching `EMBEDDING_DIM`. An adapter startup check that compares the two is **planned**. Until it exists, a mismatch shows up as `expected 1024 dimensions` on insert. See [Embedding dimension mismatch](#embedding-dimension-mismatch).
 
-**Check IAM.** The worker role needs `bedrock:InvokeModel` for the embedding model id. An `AccessDeniedException` means the policy is missing the model.
-
-**Check quota.** A `ThrottlingException` means the Bedrock quota is exceeded. The `embed` queue rate limit should prevent this. Lower it if needed.
+**Check the embed queue.** A long `embed` queue with a healthy worker means the worker is too slow for the volume. Add a worker or lower the batch size. Embedding is CPU-bound, so more concurrency on one small instance does not help.
 
 **Check the retry state:**
 
@@ -479,7 +473,7 @@ FROM failed_jobs WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 50;
 **Triage:**
 
 - Same error repeated for one task: the input is bad. Check the payload ids and fix the record.
-- External error (Bedrock, link fetch): check the dependency. Once it is healthy, requeue.
+- External error (link fetch, LLM provider): check the dependency. Once it is healthy, requeue.
 - Validation error: do not requeue until the schema or prompt is fixed.
 
 **Requeue after the fix:**
@@ -504,7 +498,7 @@ SELECT count(*) FROM listings WHERE embedding_stale_at IS NOT NULL;
 **Causes:**
 
 - A large import marked many profiles stale at once. This is expected. Run the reindex in extra batches over several nights, or temporarily raise the worker count for the `embed` queue.
-- Bedrock throttling slows each batch. See [Embedding failures](#embedding-failures).
+- A slow embedding worker lengthens each batch. See [Embedding failures](#embedding-failures).
 - A model change. Stale counts jump to the whole table. Follow the plan in [DATABASE.md §10](DATABASE.md#10-embedding-lifecycle), not a direct reindex.
 
 **Note:** Stale rows are safe. Search still uses the last good embedding. Stale data is slower to reflect changes, not wrong in a way that breaks search.
@@ -613,14 +607,15 @@ redis-cli -u "$REDIS_URL" --scan --pattern 'rl:*' | head
 
 **Symptom:** `503 dependency_unavailable`.
 
-**Find which dependency:** The error `details` field names it: `postgres`, `redis`, `bedrock`, `object_storage`.
+**Find which dependency:** The error `details` field names it: `postgres`, `redis`, `embedding_model`, or `llm_provider`.
 
 | Dependency | Check | Behaviour |
 |---|---|---|
 | Postgres | Render dashboard status, then `SELECT 1` | All writes fail. Reads fail. Recovery is automatic on Render |
 | Redis | `redis-cli -u "$REDIS_URL" PING` | Write endpoints fail closed. Read endpoints allow and log the rate-limit bypass [TECHNICAL §9] |
-| Bedrock | See [Embedding failures](#embedding-failures) | Search runs keyword-only. Profiles queue |
-| Object storage | Test a presigned URL or list the bucket with the service key | Uploads fail. Profiles keep text but not files |
+| Embedding model | See [Embedding failures](#embedding-failures) | Search runs keyword-only. Profiles queue |
+| LLM provider | None configured in phase 1. Check `LLM_PROVIDER=none` | Rerank and extraction stay off. Scores are unaffected |
+| Attachment storage (Postgres) | Run a test insert into `attachments` on staging | Uploads fail. Profiles keep text but not files |
 
 Do not restart the web service to fix a dependency outage. Restarting does not help and clears in-flight state.
 
@@ -690,7 +685,7 @@ SELECT * FROM failed_jobs WHERE task_name = 'purge_deleted' ORDER BY created_at 
 python manage.py shell -c "from workers.tasks_maintenance import purge_deleted; purge_deleted.delay()"
 ```
 
-Confirm object storage keys are removed as well, not only database rows.
+Confirm the attachment rows, and their file contents, are removed as well as the profile row.
 
 ---
 
@@ -781,20 +776,20 @@ Gaps with no traffic are normal. Gaps during traffic indicate a problem.
 
 **Symptom:** Works on staging, fails on production.
 
-**Check:** Compare the environment variable list between services. Required variables are in [README.md, Configuration](README.md#configuration). Each Render service (`ypp-web`, `ypp-worker`, `ypp-beat`) needs the same `DATABASE_URL`, `REDIS_URL`, `AWS_REGION`, and model ids.
+**Check:** Compare the environment variable list between services. Required variables are in [README.md, Configuration](README.md#configuration). Each Render service (`ypp-web`, `ypp-worker`, `ypp-beat`) needs the same `DATABASE_URL`, `REDIS_URL`, and the model settings (`EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `LLM_PROVIDER`).
 
 **Prevention:** Keep `infra/render.yaml` as the source of truth and avoid manual edits in the dashboard.
 
-### Object storage upload fails
+### Attachment upload fails
 
-**Symptom:** Uploads return `503` or `403`.
+**Symptom:** Uploads return `503`, `413` or `400`.
 
 **Checks:**
 
-- Bucket name matches `STORAGE_BUCKET`.
-- Service credentials have `PutObject` and `GetObject` on that bucket only.
-- Upload size and type checks pass. Unsupported types return `400`, not `503`.
-- Presigned URL expiry is long enough for the upload, default 5 minutes **(default)**.
+- `413` means the file is over 5 MB. Ask for a smaller file or a PDF export.
+- `400` means the file's leading bytes do not match PDF or DOCX, or the declared kind is not allowed. Unsupported types are a `400`, not a `503`.
+- `503` means the database write failed. Check Postgres health and the `attachments` table size. See [Dependency unavailable](#dependency-unavailable).
+- Downloads return `403` for anyone other than the owner, or an employer whose contact request was not accepted. This is expected, not a fault.
 
 **Malware scan:** The file is not linked to a profile until the scan passes [ARCHITECTURE.md §7]. A stuck scan shows as `pending` in `evidence`. Check the scan worker.
 
@@ -858,7 +853,7 @@ Use this when the cause is not obvious.
 
 1. **What changed?** Check the last deploy, migration, environment variable change, and taxonomy update.
 2. **Which door?** REST, MCP, admin or worker. Each has its own log stream.
-3. **Which dependency?** Postgres, Redis, Bedrock, object storage, Render.
+3. **Which dependency?** Postgres, Redis, the embedding model, the LLM provider (if any), Render.
 4. **Which request?** Use the `request_id` from the error body, and search logs and `audit_log` for it.
 5. **Is it data or code?** Reproduce on staging with the same record. If it reproduces, it is code or data. If not, it is environment.
 6. **Is it new or old?** Check whether the symptom existed before the last release.

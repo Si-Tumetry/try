@@ -36,20 +36,21 @@ flowchart LR
     end
 
     subgraph External["External services"]
-        BR["AWS Bedrock<br/>embeddings and LLM"]
-        OS["Object storage<br/>CVs and certificates"]
         CHK["External checks<br/>repo OAuth, certificate lookup,<br/>business registry"]
         NOT["Email and SMS<br/>phase 4"]
+        LLM["LLM provider<br/>not chosen yet"]
     end
+
+    EMB["Embedding model<br/>BGE-M3, self-hosted in the worker"]
 
     Y --> APP
     E --> APP
     A --> APP
     AI --> APP
-    APP --> BR
-    APP --> OS
+    APP --> EMB
     APP --> CHK
     APP -.-> NOT
+    APP -.-> LLM
 ```
 
 Actors:
@@ -76,29 +77,22 @@ All compute runs on Render in one region chosen to be close to the majority of u
 | `ypp-beat` | Background Worker | `celery -A config beat`, one instance only | Exactly 1 |
 | `ypp-db` | Render Postgres 16 | Primary data, `pgvector`, `pg_trgm`, full-text search | Vertical; read replica later |
 | `ypp-kv` | Render Key Value (Redis-compatible) | Celery broker, result backend, rate-limit counters, short caches | Vertical |
-| Object storage | External S3-compatible bucket | CVs, certificates, uploaded files | Managed by provider |
+| Attachments | Stored in `ypp-db` (phase 1). No separate file store | CVs, certificates, uploaded files, at most 5 MB each | Grows with the database. See D10 |
 
 ```mermaid
 flowchart TB
     subgraph Render["Render, one region"]
         WEB["ypp-web<br/>Gunicorn and Uvicorn<br/>REST under /v1, admin, /mcp"]
-        WRK["ypp-worker<br/>Celery workers<br/>ingest, embed, verify"]
+        WRK["ypp-worker<br/>Celery workers and the local embedding model<br/>ingest, embed, verify, scan"]
         BEAT["ypp-beat<br/>Celery Beat<br/>exactly one instance"]
-        DB[("ypp-db<br/>Postgres 16<br/>pgvector, pg_trgm")]
+        DB[("ypp-db<br/>Postgres 16<br/>pgvector, pg_trgm, attachments")]
         KV[("ypp-kv<br/>Key Value, Redis-compatible<br/>broker, rate limits")]
     end
 
-    OBJ[("Object storage<br/>S3-compatible, external")]
-    BR["AWS Bedrock"]
-
     WEB --> DB
     WEB --> KV
-    WEB --> OBJ
-    WEB --> BR
     WRK --> DB
     WRK --> KV
-    WRK --> OBJ
-    WRK --> BR
     BEAT --> KV
     KV -. "tasks" .-> WRK
 ```
@@ -235,8 +229,8 @@ Full request and response contracts are not part of this document. This section 
 | `POST /v1/contact-requests/{id}/accept` **(addition)** | Candidate accepts; contact details are released [PDF §7] | `contact` |
 | `POST /v1/reports` **(addition)** | Report a profile or listing [PDF §9, §12] | `reports` |
 | `POST /v1/employers/verification` **(addition)** | Submit business registration for checking [PDF §9] | `verification` |
-| `POST /v1/attachments` **(addition)** | Start a CV or certificate upload. Returns a signed upload URL valid for 5 minutes, TECHNICAL.md §15 | `attachments` |
-| `POST /v1/attachments/{id}/complete` **(addition)** | Confirm an upload and start the scan | `attachments` |
+| `POST /v1/attachments` **(addition)** | Upload a CV or certificate as multipart form data, at most 5 MB. The file is scanned before it can be used, TECHNICAL.md §15 | `attachments` |
+| `GET /v1/attachments/{id}` **(addition)** | Download a clean attachment, for its owner or an employer whose contact request was accepted | `attachments` |
 | `GET /v1/admin/skill-candidates` **(addition)** | Review queue for unknown skills [PDF §4] | `skills` (admin) |
 | `POST /v1/admin/skill-candidates/{id}/decision` **(addition)** | Approve (adds to taxonomy) or reject | `skills` (admin) |
 
@@ -286,8 +280,8 @@ sequenceDiagram
     participant DB as Postgres
     participant Q as Redis queue
     participant W as Worker
-    participant LLM as Bedrock LLM
-    participant EMB as Bedrock embeddings
+    participant LLM as LLM provider, not chosen yet
+    participant EMB as Embedding model, BGE-M3 in the worker
 
     C->>API: POST profile
     API->>PS: save profile
@@ -297,6 +291,7 @@ sequenceDiagram
     API-->>C: 202 Accepted with profile id
 
     Q->>W: extract_skills
+    Note over W,LLM: Off until an LLM provider is chosen. Profiles wait in pending_extraction
     W->>LLM: extract JSON against fixed taxonomy
     LLM-->>W: skills JSON
     W->>W: normalise by alias, then embedding at 0.80 or above
@@ -489,14 +484,15 @@ Personal data regulation applies in all four countries: Kenya's Data Protection 
 | D5 | LLM rerank only on the top 30 | Cost and latency bounded | Rerank can be disabled per request and when the model is degraded |
 | D6 | Unknown skills go to a review queue, never directly into the taxonomy | Protects taxonomy quality [PDF §4] | Admin review is needed for new skills |
 | D7 | Scores are stored with their breakdown | Employers see why; audits and recalibration need the inputs | Storage cost is higher; `matches.breakdown` is JSON |
-| D8 | Embedding dimension 1024 | Matches Titan Text Embeddings v2 at 1024 dimensions | Changing the model means re-embedding everything; see TROUBLESHOOTING |
+| D8 | Embedding dimension 1024, from the default model BAAI/bge-m3 (MIT licence, 100+ languages) | Matches the model's dense vector size. The model runs on our own worker, so profile text stays on our infrastructure. See TECHNICAL.md §16.1 | Changing the model means re-embedding everything; see TROUBLESHOOTING |
 | D9 | Celery with Redis broker | Standard, supported on Render Key Value | Jobs must be idempotent |
-| D10 | Object storage outside Render | Render has no S3-style object storage | Second provider to configure and monitor |
+| D10 | Attachments are stored in Postgres in phase 1 | Render has no object storage, and a Render persistent disk attaches to one service only, so the web app and the worker could not share files. Postgres is shared by both, and files are capped at 5 MB | The database grows with CV volume. Ops monitors its size, and a file store behind the same interface replaces the table when the threshold is reached (TECHNICAL.md §16.3) |
 | D11 | Scoring weights are starting values, versioned | Weights are not yet calibrated [PDF §6] | Any change bumps `scoring_version` and must pass the regression suite |
 | D12 | Opportunity data enters by admin CSV first, then official connectors (Greenhouse Job Board API), then feeds under a written agreement. Generic scraping only under the registry rules in TECHNICAL.md §14.14 | Partner pages are not ours to republish without permission. Greenhouse publishes board data for this purpose. See TECHNICAL.md §14 | Each source needs a permission reference before it runs. Scrapers fail closed on structure change |
 | D13 | LinkedIn is not a listings source. Its Job Posting API pushes jobs into LinkedIn for approved partners and gives no job data to us. Candidate LinkedIn data arrives only as a file the candidate exports, or through official sign-in once verified | LinkedIn's User Agreement §8.2 prohibits scraping and third-party use of its data. The Job Posting API requires partner approval and is for posting, not sourcing. See TECHNICAL.md §14.13 | Matching LinkedIn-based candidates depends on exports or a later official sign-in integration |
 | D15 | Listings are not limited to the four pilot countries. Each listing records eligible countries and a scope, and youth search defaults to listings open in the youth's country | Greenhouse covers employers worldwide, and the goal is a range of opportunities. See TECHNICAL.md §14.19 | Listing model stores eligibility. Search needs a scope filter. Scoring ignores scope |
-| D14 | Attachments are scanned before use, and downloads use short-lived signed URLs | CVs contain personal data and may carry malware. See TECHNICAL.md §15 | Uploads add a scan step and a status lifecycle before a file can be linked |
+| D14 | Attachments are scanned before use, and downloads are served by the API after an authorisation check. No public file links | CVs contain personal data and may carry malware. See TECHNICAL.md §15 | Uploads add a scan step and a status lifecycle before a file can be linked. Downloads pass through the API |
+| D16 | No LLM provider is chosen yet. LLM features stay off, and the deterministic matcher and parser cover what they can | A provider needs a data-protection review for the four pilot countries and its retention terms. See TECHNICAL.md §16.2 | Profile extraction waits. Rerank is skipped. Scoring is unaffected |
 
 ---
 
@@ -537,12 +533,12 @@ flowchart TD
 
 | Failure | Behaviour |
 |---|---|
-| Bedrock embedding unavailable | Search runs keyword-only and reports `embedding_status = unavailable`. Profiles that need an embedding stay `pending_embedding` and are retried with backoff |
-| Bedrock LLM unavailable | Extraction queued for retry. Rerank is skipped and reports `rerank_status = failed`. Scores still returned |
+| Embedding model cannot load or runs out of memory | Search runs keyword-only and reports `embedding_status = unavailable`. Profiles that need an embedding stay `pending_embedding` and are retried after the worker is restarted or resized |
+| LLM provider unavailable, or none configured | Extraction waits in `pending_extraction`. Rerank is skipped and reports `rerank_status = skipped` or `failed`. Scores still returned |
 | Redis unavailable | Rate limits fail closed on write endpoints, open on read endpoints with logging. Celery tasks wait and retry |
 | Postgres unavailable | Requests return `503`. No partial writes because each service call runs in a transaction |
 | Worker crash mid-task | Celery acknowledges late; tasks are idempotent, so a re-run produces the same state |
-| Object storage unavailable | Uploads return `503`; no profile is linked to a missing file |
+| Database write fails during an upload | Upload returns `503`; nothing is stored, and no attachment is linked to a profile |
 
 ---
 
@@ -568,7 +564,9 @@ flowchart TD
 | Item | Owner | Needed by |
 |---|---|---|
 | Confirm the 30-day deletion window and backup retention with local counsel | Legal | Before pilot |
-| Choose the object storage provider and region | Engineering | Before evidence upload work |
+| Confirm attachment storage in Postgres, and the size threshold for moving it to a file store (D10) | Engineering | Before evidence upload work |
+| Choose the LLM provider, after a data-protection review for the four pilot countries (D16) | Product and Legal | Before profile extraction and rerank are enabled |
+| Measure the embedding model's peak memory on staging, then choose the worker plan | Engineering | Before staging |
 | Confirm the Render region and Postgres plan size | Engineering | Before staging |
 | Confirm the pgvector extension on the selected Render plan | Engineering | Before first migration |
 | Agree the employer business-registration check provider per country | Operations | Before employer onboarding |

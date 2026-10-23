@@ -27,11 +27,27 @@ def phrase_pattern(phrase: str) -> re.Pattern[str]:
     )
 
 
+@lru_cache(maxsize=8)
+def _matcher_for(skills: tuple[Skill, ...]) -> tuple[re.Pattern[str], dict[str, str]]:
+    """One combined pattern for a whole taxonomy. Longer phrases are tried first, so "python3" beats "python"."""
+    owner: dict[str, str] = {}
+    for skill in skills:
+        for phrase in (skill.name, *skill.aliases):
+            key = phrase.lower().strip()
+            if key:
+                owner.setdefault(key, skill.slug)
+    ordered = sorted(owner, key=len, reverse=True)
+    pattern = re.compile(
+        r"(?<![a-z0-9+#.])(" + "|".join(re.escape(p) for p in ordered) + r")(?![a-z0-9+#])"
+    )
+    return pattern, owner
+
+
 def skill_mentions(text: str, skills: Iterable[Skill]) -> list[Skill]:
-    lowered = text.lower()
-    found = [
-        skill
-        for skill in skills
-        if any(phrase_pattern(p).search(lowered) for p in (skill.name, *skill.aliases) if p.strip())
-    ]
-    return sorted(found, key=lambda s: s.slug)
+    skills_t = tuple(skills)
+    if not skills_t or not text:
+        return []
+    pattern, owner = _matcher_for(skills_t)
+    slugs = {owner[m.group(1)] for m in pattern.finditer(text.lower())}
+    by_slug = {s.slug: s for s in skills_t}
+    return sorted((by_slug[slug] for slug in slugs), key=lambda s: s.slug)

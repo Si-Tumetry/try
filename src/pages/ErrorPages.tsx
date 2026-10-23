@@ -1,29 +1,32 @@
 import type { ReactNode } from 'react';
 import { isRouteErrorResponse, Link, useRouteError } from 'react-router';
 import { ArrowRightIcon } from '../components/Icon';
+import { PhotoBand } from '../components/PhotoBand';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 function Panel({ code, title, children }: { code: string; title: string; children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-2xl px-6 py-28 text-center">
-      <p className="font-mono text-xs tracking-wider text-ink-500">{code}</p>
-      <h1 className="mt-4 font-serif text-4xl leading-tight font-normal text-ink-900 md:text-5xl">{title}</h1>
-      <div className="mt-6 text-ink-600">{children}</div>
-      <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-        <Link
-          to="/"
-          className="inline-flex items-center rounded-full bg-ink-900 px-6 py-3 text-sm font-semibold text-cream-50 transition-colors hover:bg-accent-blue"
-        >
-          Go home
-        </Link>
-        <Link
-          to="/opportunities"
-          className="inline-flex items-center gap-1 rounded-full border border-ink-900/15 px-6 py-3 text-sm font-semibold text-ink-900 transition-colors hover:bg-cream-100"
-        >
-          Browse opportunities <ArrowRightIcon aria-hidden="true" />
-        </Link>
+    <PhotoBand image="/images/city-chicago.jpg" className="flex min-h-[70vh] items-center" innerClassName="py-28 text-center">
+      <div className="mx-auto max-w-2xl">
+        <p className="font-mono text-xs tracking-wider text-blue-200">{code}</p>
+        <h1 className="mt-4 font-serif text-4xl leading-tight font-normal text-white md:text-5xl">{title}</h1>
+        <div className="mt-6 text-blue-100">{children}</div>
+        <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Link
+            to="/"
+            className="inline-flex items-center rounded-full bg-blue-50 px-6 py-3 text-sm font-semibold text-accent-navy transition-colors hover:bg-blue-200 focus-visible:outline-blue-200"
+          >
+            Go home
+          </Link>
+          <Link
+            to="/opportunities"
+            className="inline-flex items-center gap-1 rounded-full border border-blue-200/60 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10 focus-visible:outline-blue-200"
+          >
+            Browse opportunities <ArrowRightIcon aria-hidden="true" />
+          </Link>
+        </div>
       </div>
-    </div>
+    </PhotoBand>
   );
 }
 
@@ -58,7 +61,7 @@ export function RouteErrorPage() {
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="mt-6 min-h-11 rounded-full border border-ink-900/15 px-5 text-sm font-semibold text-ink-900 hover:bg-cream-100"
+        className="mt-6 min-h-11 rounded-full border border-blue-200/60 px-5 text-sm font-semibold text-white hover:bg-white/10"
       >
         Reload this page
       </button>

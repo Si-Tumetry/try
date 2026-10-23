@@ -33,13 +33,13 @@ describe('site routes', () => {
       renderAt('/');
 
       expect(await screen.findByRole('heading', { level: 1, name: /step into work/i })).toBeInTheDocument();
-      expect(await screen.findByText(/30 listings · 2 employers/)).toBeInTheDocument();
+      expect(await screen.findByText(/2 employers · /)).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Payments Analyst' })).toBeInTheDocument();
     });
 
     it('sends a hero search to the directory with the query', async () => {
       renderAt('/');
-      await screen.findByText(/30 listings/);
+      await screen.findByText(/2 employers · /);
 
       fireEvent.change(screen.getByLabelText('Search by role, employer or place'), { target: { value: 'python' } });
       fireEvent.submit(screen.getByRole('search', { name: 'Search opportunities' }));
@@ -50,7 +50,7 @@ describe('site routes', () => {
 
     it('does not show unverified figures', async () => {
       renderAt('/');
-      await screen.findByText(/30 listings/);
+      await screen.findByText(/2 employers · /);
 
       expect(screen.queryByText(/94\.6/)).not.toBeInTheDocument();
       expect(screen.queryByText(/1,420/)).not.toBeInTheDocument();

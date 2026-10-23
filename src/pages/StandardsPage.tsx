@@ -16,6 +16,7 @@ export function StandardsPage() {
 
   return (
     <ProsePage
+      image="/images/sector-data-dashboard.jpg"
       eyebrow="Standards"
       title="How listings are checked"
       intro="NextStep shows opportunities from employers’ own public postings. This page explains where they come from, what we label, and what we have not yet put in place."
@@ -33,7 +34,7 @@ export function StandardsPage() {
         <p>Every listing carries one of five eligibility labels. We use these exact words everywhere.</p>
         <dl className="space-y-4">
           {(Object.keys(SCOPE_LABELS) as (keyof typeof SCOPE_LABELS)[]).map((scope) => (
-            <div key={scope} className="rounded-xl border border-ink-900/10 bg-white p-5">
+            <div key={scope} className="rounded-xl border border-blue-300/60 bg-blue-50 p-5">
               <dt className="font-semibold text-ink-900">{SCOPE_LABELS[scope]}</dt>
               <dd className="mt-1 text-[15px] text-ink-600">{SCOPE_MEANINGS[scope]}</dd>
             </div>

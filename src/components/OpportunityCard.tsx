@@ -9,7 +9,7 @@ export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
   const id = listingId(opportunity);
 
   return (
-    <article className="group relative flex flex-col gap-4 rounded-2xl border border-ink-900/8 bg-cream-100/50 p-6 transition-all hover:border-ink-900/20 hover:bg-white">
+    <article className="group relative flex flex-col gap-4 rounded-2xl border border-blue-300/60 bg-blue-50 p-6 transition-all hover:border-accent-blue/40 hover:bg-blue-200/50">
       <header className="space-y-2">
         <p className="text-xs font-medium text-ink-600">{opportunity.employer}</p>
         <h3 className="font-serif text-xl leading-snug font-medium text-ink-900 group-hover:text-accent-blue">

@@ -1,11 +1,11 @@
 import { SCOPE_LABELS, WORK_MODE_LABELS, type Opportunity, type Scope, type WorkMode } from '../lib/opportunities';
 
 const SCOPE_STYLES: Record<Scope, string> = {
-  in_region: 'bg-chip-blue-soft text-accent-navy',
-  remote_in_region: 'bg-chip-blue-soft text-accent-navy',
-  outside_region: 'bg-cream-200 text-ink-700',
-  remote_outside_region: 'bg-cream-200 text-ink-700',
-  unspecified: 'border border-ink-900/15 text-ink-600',
+  in_region: 'bg-accent-blue text-white',
+  remote_in_region: 'bg-accent-blue text-white',
+  outside_region: 'bg-blue-200 text-accent-navy',
+  remote_outside_region: 'bg-blue-200 text-accent-navy',
+  unspecified: 'border border-accent-blue/40 text-accent-navy',
 };
 
 export function ScopeTag({ scope }: { scope: Scope }) {
@@ -16,7 +16,7 @@ export function ScopeTag({ scope }: { scope: Scope }) {
 
 export function WorkModeTag({ mode }: { mode: WorkMode }) {
   return (
-    <span className="rounded-full border border-ink-900/10 bg-cream-100 px-2.5 py-1 text-xs text-ink-700">
+    <span className="rounded-full border border-accent-blue/25 bg-blue-50 px-2.5 py-1 text-xs text-accent-navy">
       {WORK_MODE_LABELS[mode]}
     </span>
   );
@@ -26,7 +26,5 @@ export function CountryTags({ countries }: { countries: Opportunity['eligible_co
   if (countries.length === 0) {
     return null;
   }
-  return (
-    <span className="font-mono text-xs text-ink-500">{countries.join(' · ')}</span>
-  );
+  return <span className="font-mono text-xs text-ink-500">{countries.join(' · ')}</span>;
 }

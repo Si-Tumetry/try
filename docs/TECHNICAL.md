@@ -38,14 +38,13 @@ backend/
 │   │   ├── parser.py        requirement parsing
 │   │   ├── retriever.py     vector, keyword, RRF
 │   │   ├── reranker.py      LLM rerank with schema validation
-│   │   └── embeddings.py    embedding interface and Bedrock adapter
+│   │   └── embeddings.py    embedding interface and local BGE-M3 adapter
 │   ├── ingestion/
 │   │   ├── extractor.py     LLM skill extraction
 │   │   ├── normaliser.py    alias then embedding match
 │   │   └── documents.py     profile document builder
 │   ├── llm/
-│   │   ├── base.py          LLM interface
-│   │   └── bedrock.py       Bedrock adapter
+│   │   └── base.py          LLM interface. No provider adapter until one is chosen (§16.2)
 │   └── models/              Django models
 ├── api/
 │   ├── v1/                  DRF views, serializers, URL routes
@@ -608,7 +607,7 @@ Failure behaviour: if Redis is unavailable, write endpoints fail closed (503) an
 | Queue | Tasks | Concurrency |
 |---|---|---|
 | `ingest` | extraction, normalisation, document build | 4 per worker |
-| `embed` | embedding calls | 8 per worker, rate limited to Bedrock quota |
+| `embed` | embedding calls | Runs the local model in-process. Concurrency is set by the worker's memory and CPU, not an API quota (§16.1) |
 | `verify` | link fetches, API lookups | 8 per worker |
 | `maintenance` | reindex, purge, reports, monthly fairness report | 1 per worker |
 
@@ -956,11 +955,12 @@ Attachments are files a candidate uploads: a CV, certificates, a cover letter, a
 |---|---|
 | Accepted types | PDF, DOCX. Checked from the file's leading bytes (magic numbers), not from the extension |
 | Maximum size | 5 MB per file |
-| Names | The client's filename is stored for display only. Sanitised. Storage keys are random UUIDs |
-| Access | Never served directly. Downloads use a short-lived signed URL (5 minutes) for the owner, or for an employer the candidate has contacted |
+| Names | The client's filename is stored for display only. Sanitised. Rows are keyed by random UUIDs |
+| Storage | `attachments.content` in Postgres in phase 1. No separate file store. Reasons and the move path are in ARCHITECTURE.md D10 |
+| Access | Served by the API after an authorisation check. Allowed for the owner, and for an employer whose contact request the candidate has accepted (§6.4 in ARCHITECTURE.md). Only `clean` files are served. No public links |
 | Scan | Every file is scanned before it is marked `clean`. Only `clean` files can be linked to a profile, evidence or application |
 | Text extraction | CV text is extracted for profile extraction (§4). It is untrusted data and follows the rules in §4.2 |
-| Deletion | Removed from storage when the profile is purged (§6 in DATABASE.md) |
+| Deletion | The row, including its bytes, is removed when the profile is purged (§6 in DATABASE.md) |
 
 ### 15.2 Upload flow
 
@@ -969,27 +969,24 @@ sequenceDiagram
     autonumber
     participant C as Candidate app
     participant API as REST /v1/attachments
-    participant DB as Postgres
-    participant OBJ as Object storage
+    participant DB as Postgres attachments
     participant SCAN as Scan worker
 
-    C->>API: POST /v1/attachments with kind, filename, size, sha256
-    API->>API: check size and declared type
-    API->>DB: insert attachments row, scan_status pending
-    API-->>C: 201 with id and signed upload URL, valid 5 minutes
-    C->>OBJ: PUT file to signed URL
-    C->>API: POST /v1/attachments/{id}/complete
-    API->>OBJ: confirm object exists and size matches
+    C->>API: POST /v1/attachments, multipart with kind and file
+    API->>API: check size and magic bytes against the declared kind
+    API->>DB: insert row with content, scan_status pending
+    API-->>C: 201 with id and status pending
     API->>SCAN: enqueue scan_attachment
-    SCAN->>OBJ: read file
-    SCAN->>SCAN: check magic bytes and malware scan
+    SCAN->>DB: read content
+    SCAN->>SCAN: malware scan, and text extraction for CVs
     alt clean
-        SCAN->>DB: scan_status clean
-        SCAN->>DB: extract text for CVs
-    else infected or wrong type
-        SCAN->>DB: scan_status infected or rejected
-        SCAN->>OBJ: delete object
+        SCAN->>DB: scan_status clean, store extracted_text
+    else infected or rejected
+        SCAN->>DB: scan_status infected or rejected, clear content
     end
+    C->>API: GET /v1/attachments/{id}
+    API->>API: check owner, or accepted contact request
+    API-->>C: file bytes, only when clean
 ```
 
 ### 15.3 Data
@@ -999,3 +996,40 @@ The `attachments` table is defined in DATABASE.md §4.20.
 ### 15.4 LinkedIn and other exports
 
 A candidate who wants their LinkedIn profile used in matching exports it from LinkedIn themselves, as a PDF, and uploads it as a CV. The file is the candidate's own data, and the candidate chooses to share it. We do not fetch LinkedIn pages on the candidate's behalf. The same applies to other sites: the candidate downloads, we ingest the file they gave us.
+
+---
+
+## 16. Models
+
+The design needs two model capabilities: text embeddings for retrieval, and an LLM for extraction, parsing and reranking. Neither is tied to a vendor in this design. Both sit behind interfaces (`core/ports.py`), and the choice is made in configuration.
+
+### 16.1 Embeddings
+
+| Item | Decision |
+|---|---|
+| Default model | `BAAI/bge-m3` (MIT licence, 100+ languages, dense vectors of 1024 dimensions) |
+| Where it runs | In the worker process (`ypp-worker`), on our own infrastructure. Profile text does not leave it |
+| Config | `EMBEDDING_PROVIDER=local`, `EMBEDDING_MODEL=BAAI/bge-m3`, `EMBEDDING_DIM=1024` |
+| Vector form | Normalised to unit length, so cosine similarity equals the dot product |
+| Failure | If the model cannot load or run, the same rules as an unavailable embedder apply: keyword-only search and `embedding_status = unavailable` (§5.3) |
+| Capacity | The model must fit in the worker's memory. Measure peak memory on staging before choosing the Render plan. This is an open item |
+| Changing the model | A different model or dimension means re-embedding every row. Follow the migration plan in DATABASE.md §10. The `embedding_model` column on each row says which model produced it |
+
+`EMBEDDING_PROVIDER=none` turns embeddings off entirely. Search then uses the keyword channel only.
+
+### 16.2 LLM
+
+No LLM provider is chosen yet. `LLM_PROVIDER=none` is the only value the settings accept, because it is the only value with an adapter.
+
+While it is `none`:
+
+- Listing skills use the deterministic matcher only (§14.4).
+- Free-text requirement parsing uses the deterministic parser (§5.1).
+- Profile skill extraction is queued and not run. Profiles that need it stay in `pending_extraction` (ARCHITECTURE.md §6.1).
+- Search runs without the rerank step, and reports `rerank_status = skipped` (§5.5).
+
+Before a provider is chosen, the choice must be checked against the data-protection law of the four pilot countries (PDF §9) and the provider's terms on data retention and training use. Profile text is personal data. Adding a provider means adding its value to `LLM_PROVIDERS` in `core/settings.py` and writing its adapter.
+
+### 16.3 Attachment storage
+
+Attachments are stored in Postgres in phase 1 (ARCHITECTURE.md D10). Each file is at most 5 MB (§15.1). Ops monitors the database size. When it reaches the threshold ops sets, the storage moves to a file store behind the same interface, with a migration that copies rows out of the table.

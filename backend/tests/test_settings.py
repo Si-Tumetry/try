@@ -37,6 +37,30 @@ def test_non_numeric_values_are_refused(name, value):
         Settings.from_env({name: value})
 
 
+def test_embedding_defaults_to_the_self_hosted_multilingual_model():
+    s = Settings.from_env({})
+    assert s.embedding_provider == "local"
+    assert s.embedding_model == "BAAI/bge-m3"
+    assert s.llm_provider == "none"
+
+
+def test_llm_provider_without_an_adapter_is_refused():
+    with pytest.raises(SettingsError, match="No other LLM adapter"):
+        Settings.from_env({"LLM_PROVIDER": "some-vendor"})
+
+
+def test_unknown_embedding_provider_is_refused():
+    with pytest.raises(SettingsError, match="EMBEDDING_PROVIDER"):
+        Settings.from_env({"EMBEDDING_PROVIDER": "cloud"})
+
+
+def test_vendor_specific_settings_are_gone():
+    s = Settings.from_env({"AWS_REGION": "us-east-1", "STORAGE_BUCKET": "b", "BEDROCK_EMBED_MODEL_ID": "x"})
+    assert not hasattr(s, "aws_region")
+    assert not hasattr(s, "storage_bucket")
+    assert not hasattr(s, "bedrock_embed_model_id")
+
+
 def test_score_default_out_of_range_is_refused():
     with pytest.raises(SettingsError):
         Settings.from_env({"MATCH_MIN_SCORE_DEFAULT": "101"})
@@ -56,13 +80,13 @@ def test_ingest_contact_must_be_an_email_before_live_fetches():
 def test_dotenv_reader_skips_comments_and_strips_quotes(tmp_path):
     path = tmp_path / ".env"
     path.write_text(
-        "# a comment\n\nAPP_ENV=demo\nYPP_INGEST_CONTACT=\"ops@example.org\"\nSTORAGE_BUCKET='ypp-uploads'\nbroken line\n",
+        "# a comment\n\nAPP_ENV=demo\nYPP_INGEST_CONTACT=\"ops@example.org\"\nRRF_KEY='x'\nbroken line\n",
         encoding="utf-8",
     )
     assert read_dotenv(path) == {
         "APP_ENV": "demo",
         "YPP_INGEST_CONTACT": "ops@example.org",
-        "STORAGE_BUCKET": "ypp-uploads",
+        "RRF_KEY": "x",
     }
 
 

@@ -6,6 +6,8 @@ from pathlib import Path
 from core.errors import YppError
 
 APP_ENVIRONMENTS = frozenset({"dev", "demo", "staging", "production"})
+EMBEDDING_PROVIDERS = frozenset({"local", "none"})
+LLM_PROVIDERS = frozenset({"none"})  # Only "none" has an adapter. Add a value here together with its adapter.
 
 
 class SettingsError(YppError):
@@ -37,12 +39,12 @@ class Settings:
     embedding_dim: int = 1024
     min_score_default: int = 40
     rrf_k: int = 60
+    embedding_provider: str = "local"
+    embedding_model: str = "BAAI/bge-m3"
+    llm_provider: str = "none"
+    llm_model: str | None = None
     database_url: str | None = None
     redis_url: str | None = None
-    aws_region: str | None = None
-    bedrock_embed_model_id: str | None = None
-    bedrock_llm_model_id: str | None = None
-    storage_bucket: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -71,17 +73,24 @@ class Settings:
             embedding_dim=integer("EMBEDDING_DIM", 1024),
             min_score_default=integer("MATCH_MIN_SCORE_DEFAULT", 40),
             rrf_k=integer("RRF_K", 60),
+            embedding_provider=text("EMBEDDING_PROVIDER") or "local",
+            embedding_model=text("EMBEDDING_MODEL") or "BAAI/bge-m3",
+            llm_provider=text("LLM_PROVIDER") or "none",
+            llm_model=text("LLM_MODEL"),
             database_url=text("DATABASE_URL"),
             redis_url=text("REDIS_URL"),
-            aws_region=text("AWS_REGION"),
-            bedrock_embed_model_id=text("BEDROCK_EMBED_MODEL_ID"),
-            bedrock_llm_model_id=text("BEDROCK_LLM_MODEL_ID"),
-            storage_bucket=text("STORAGE_BUCKET"),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if self.embedding_provider not in EMBEDDING_PROVIDERS:
+            raise SettingsError(f"EMBEDDING_PROVIDER must be one of {sorted(EMBEDDING_PROVIDERS)}")
+        if self.llm_provider not in LLM_PROVIDERS:
+            raise SettingsError(
+                f"LLM_PROVIDER must be one of {sorted(LLM_PROVIDERS)}. "
+                "No other LLM adapter is built yet"
+            )
         if not 1 <= self.embedding_dim <= 4096:
             raise SettingsError("EMBEDDING_DIM must be between 1 and 4096")
         if not 0 <= self.min_score_default <= 100:

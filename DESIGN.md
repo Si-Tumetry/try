@@ -2,6 +2,8 @@
 
 This document designs the pages of **NextStep**, the web product for the Youth Yellow Pages directory. It covers the visual system, the sitemap, and a specification for each page: purpose, layout, data source, states, and whether the backend supports it today. It does not build any pages. For the front-end architecture see [docs/FRONTEND.md](docs/FRONTEND.md). For the backend see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
+> **Build status.** Built: landing (4.1), directory (4.2), opportunity detail (4.3), standards (4.4), about (4.5), legal drafts (4.15), and error pages (4.16). Not built, waiting on authentication or the REST API: sign-in and sign-up (4.6), onboarding (4.7), my profile and matches (4.8 and 4.9), privacy controls (4.10), and all employer pages (4.11 to 4.14). See docs/FRONTEND.md.
+>
 > **Naming.** The product is called NextStep. The landing-page sample and the repository docs still say "Youth Yellow Pages", which is the name of the directory service. This document uses NextStep as the product name and keeps "Youth Yellow Pages" for the directory engine and the repository. Confirm the brand before the name appears in the live site, the footer, or the legal pages.
 
 ## 1. Design direction
@@ -20,6 +22,8 @@ Four principles follow from the product rules in the README and TECHNICAL.md:
 The sample landing page sets the base. It is written with the Tailwind CDN, so the tokens below need to move into the React app before launch (section 8).
 
 ### 2.1 Colour
+
+> **Revised.** Blue is now the base colour. The cream background and white cards in the table below are replaced by blue tints (`blue-100` page, `blue-50` cards, `blue-200` hover). Blue bands (header, footer, photo bands) carry the white text. Photographs are used for the hero, sector cards and section bands; every photograph is checked to contain no people (see `public/images/CREDITS.md`). The table is kept as the record of the original palette.
 
 | Token | Hex | Use |
 |---|---|---|

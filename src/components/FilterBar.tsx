@@ -10,7 +10,7 @@ interface FilterBarProps {
 }
 
 const selectClass =
-  'min-h-11 rounded-lg border border-ink-900/15 bg-white px-3 py-2 text-sm text-ink-900 focus:border-ink-900/40';
+  'min-h-11 rounded-lg border border-accent-blue/30 bg-blue-50 px-3 py-2 text-sm text-ink-900 focus:border-accent-blue';
 
 export function FilterBar({ filters, countries, onChange, onReset }: FilterBarProps) {
   const isDirty = Object.values(filters).some((value) => value !== '');
@@ -19,7 +19,7 @@ export function FilterBar({ filters, countries, onChange, onReset }: FilterBarPr
     <form
       role="search"
       aria-label="Filter opportunities"
-      className="grid grid-cols-1 gap-3 rounded-2xl border border-ink-900/10 bg-white p-4 sm:grid-cols-2 lg:grid-cols-6"
+      className="grid grid-cols-1 gap-3 rounded-2xl border border-blue-300/60 bg-blue-50 p-4 sm:grid-cols-2 lg:grid-cols-6"
       onSubmit={(event) => event.preventDefault()}
     >
       <label className="flex flex-col gap-1.5 text-xs font-semibold text-ink-500 sm:col-span-2">
@@ -31,7 +31,7 @@ export function FilterBar({ filters, countries, onChange, onReset }: FilterBarPr
             placeholder="Role, employer or place"
             value={filters.query}
             onChange={(event) => onChange({ ...filters, query: event.target.value })}
-            className="min-h-11 w-full rounded-lg border border-ink-900/15 bg-white py-2 pr-3 pl-9 text-sm font-normal text-ink-900 placeholder:text-ink-400 focus:border-ink-900/40"
+            className="min-h-11 w-full rounded-lg border border-accent-blue/30 bg-blue-50 py-2 pr-3 pl-9 text-sm font-normal text-ink-900 placeholder:text-ink-400 focus:border-accent-blue"
           />
         </span>
       </label>

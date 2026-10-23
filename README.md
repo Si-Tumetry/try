@@ -20,11 +20,11 @@ Built so far:
 - MCP server with the six read tools and bearer-token authentication.
 - Opportunity ingestion: a Greenhouse Job Board connector, a location parser that gives each listing its eligible countries and scope, and a demo loader that refuses to run in production.
 - Youth opportunity search defaults to listings open in the youth's country. A global view is available and labelled.
-- 208 tests, all passing without network access, a database or AWS credentials.
+- 233 tests, all passing without network access, a database, or model API keys.
 
-Also built: cursor pagination on search and list endpoints, a settings module that reads and validates environment variables (`backend/.env.example` lists them), and deterministic skill matching for listings.
+Also built: cursor pagination on search and list endpoints, a settings module that reads and validates environment variables (`backend/.env.example` lists them), a 303-skill taxonomy (`backend/taxonomy/skills.json`, validated on load), and deterministic skill matching for listings. Matching skips company descriptions, diversity statements, and non-English postings.
 
-Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters (including the LLM step of listing skill extraction), OAuth, the full skills taxonomy (about 300 skills; the demo uses a small test set), and the scheduled connector. The engine runs against an in-memory store until the Postgres store exists.
+Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), the self-hosted embedding adapter, an LLM provider and its adapter (which also means the LLM step of listing skill extraction), OAuth, the scheduled connector, and the attachment upload endpoint. The engine runs against an in-memory store until the Postgres store exists.
 
 Refreshing the demo snapshot from the live Greenhouse boards:
 
@@ -55,8 +55,8 @@ The source specification is `Youth_Yellow_Pages_Technical_Design.pdf` (version 1
 | Database | PostgreSQL 16 on Render, with `pgvector` and `pg_trgm` |
 | Cache and broker | Redis-compatible Render Key Value |
 | Background jobs | Celery 5 with Celery Beat for schedules |
-| Object storage | S3-compatible bucket for CVs, certificates and uploads |
-| Models | AWS Bedrock: an embedding model (Titan Text Embeddings v2, 1024 dimensions) and an LLM for extraction and explanation |
+| Attachments | CVs and certificates stored in Postgres, at most 5 MB each (phase 1) |
+| Models | Embeddings: self-hosted BAAI/bge-m3 (MIT licence, 1024 dimensions) in the worker. LLM provider not chosen yet; LLM features are off |
 | Web front end | React 19, TypeScript, Vite, pnpm (at the repository root) |
 | Hosting | Render (web, worker, beat, Postgres, Key Value) |
 
@@ -94,7 +94,7 @@ The layout below is the target structure. Directories are created as the backend
 
 ## Web front end
 
-The web app is a React single-page app at the repository root. It lists opportunities with filters for search, country, work mode and eligibility. Each card links to the employer's original posting.
+The web app is a React single-page app at the repository root. It is the NextStep public site: a landing page, the opportunity directory with filters, opportunity detail pages, and standards, about and legal pages. Each listing links to the employer's original posting.
 
 Prerequisites: Node.js 20.19 or newer (22 recommended) and pnpm 12.
 
@@ -107,7 +107,7 @@ pnpm build            # outputs dist/
 pnpm preview          # serves dist/ at http://localhost:4173
 ```
 
-The app reads `public/data/opportunities.json`. This is a snapshot of public Greenhouse job board data (copied from `backend/demo/`). Once the REST API exists, change `DATA_URL` in `src/App.tsx` to the `/v1` endpoint and the components do not need to change.
+The app reads `public/data/opportunities.json`. This is a snapshot of public Greenhouse job board data (copied from `backend/demo/`). Once the REST API exists, change `DATA_URL` in `src/hooks/useOpportunities.ts` to the `/v1` endpoint. See docs/FRONTEND.md for the routes and design rules.
 
 Deployment: `infra/render.yaml` defines a Render static site that runs `pnpm build` and publishes `dist/`, with security headers set.
 
@@ -155,10 +155,10 @@ Settings come from environment variables. Secrets never go in the repository.
 | `DJANGO_ALLOWED_HOSTS` | Allowed host names | `api.example.org` |
 | `DATABASE_URL` | Postgres connection string | `postgresql://ypp:...@host:5432/ypp` |
 | `REDIS_URL` | Broker and cache | `redis://host:6379/0` |
-| `AWS_REGION` | Bedrock and S3 region | `us-east-1` |
-| `BEDROCK_EMBED_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |
-| `BEDROCK_LLM_MODEL_ID` | Extraction and explanation model | (set per environment) |
-| `STORAGE_BUCKET` | Object storage bucket for uploads | `ypp-uploads` |
+| `EMBEDDING_PROVIDER` | `local` (self-hosted model) or `none` | `local` |
+| `EMBEDDING_MODEL` | Embedding model | `BAAI/bge-m3` |
+| `LLM_PROVIDER` | Only `none` until a provider is chosen | `none` |
+| `LLM_MODEL` | Model name, once a provider is chosen | (empty) |
 | `EMBEDDING_DIM` | Vector size, must match the model and DB | `1024` |
 | `MATCH_MIN_SCORE_DEFAULT` | Default minimum score for search | `40` |
 | `SKILL_MATCH_THRESHOLD` | Embedding similarity for normalisation | `0.80` |
@@ -166,7 +166,7 @@ Settings come from environment variables. Secrets never go in the repository.
 
 ## Running tests
 
-The current tests need no database, Redis or AWS credentials.
+The current tests need no database, Redis, or model API keys, and no network access.
 
 ```bash
 cd backend

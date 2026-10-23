@@ -12,6 +12,7 @@ export function AboutPage() {
 
   return (
     <ProsePage
+      image="/images/about-office.jpg"
       eyebrow="About"
       title="A first step into work"
       intro="NextStep helps young people find attachments, internships and entry-level roles, and shows them clearly who each role is open to. It is part of Youth Yellow Pages, a directory for early career mobility across Africa."

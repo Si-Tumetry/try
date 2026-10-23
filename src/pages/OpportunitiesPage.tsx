@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { FilterBar } from '../components/FilterBar';
+import { PhotoBand } from '../components/PhotoBand';
 import { OpportunityCard } from '../components/OpportunityCard';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOpportunities } from '../hooks/useOpportunities';
@@ -91,14 +92,18 @@ export function OpportunitiesPage() {
   const shown = results.slice(0, visibleCount);
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-14 lg:px-12">
-      <header className="mb-10 max-w-3xl">
-        <p className="mb-3 font-mono text-xs tracking-wider text-ink-500 uppercase">Directory</p>
-        <h1 className="font-serif text-4xl leading-tight font-normal text-ink-900 md:text-5xl">Opportunities</h1>
-        <p className="mt-4 text-base text-ink-600">
-          Attachments, internships and entry-level roles. Each listing links to the employer&rsquo;s own posting.
-        </p>
-      </header>
+    <>
+      <PhotoBand image="/images/directory-laptop-dashboard.jpg" priority innerClassName="py-16 md:py-20">
+        <header className="max-w-3xl">
+          <p className="mb-3 font-mono text-xs tracking-wider text-blue-200 uppercase">Directory</p>
+          <h1 className="font-serif text-4xl leading-tight font-normal text-white md:text-5xl">Opportunities</h1>
+          <p className="mt-4 text-base text-blue-100">
+            Attachments, internships and entry-level roles. Each listing links to the employer&rsquo;s own posting.
+          </p>
+        </header>
+      </PhotoBand>
+
+      <div className="mx-auto max-w-7xl px-6 py-14 lg:px-12">
 
       {state.status === 'loading' && (
         <p role="status" className="py-16 text-center text-sm text-ink-500">
@@ -107,7 +112,7 @@ export function OpportunitiesPage() {
       )}
 
       {state.status === 'error' && (
-        <div role="alert" className="rounded-2xl border border-ink-900/10 bg-white p-8 text-center">
+        <div role="alert" className="rounded-2xl border border-blue-300/60 bg-blue-50 p-8 text-center">
           <p className="text-sm text-ink-700">{state.message}. Refresh the page to try again.</p>
         </div>
       )}
@@ -119,7 +124,7 @@ export function OpportunitiesPage() {
           <div className="mt-8 mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div aria-live="polite">
               <p className="font-semibold text-ink-900">
-                Showing {shown.length} of {formatCount(results.length, 'opportunity')}
+                Showing {shown.length} of {formatCount(results.length, 'opportunity', 'opportunities')}
               </p>
               <p className="mt-1 font-mono text-xs text-ink-500">
                 Listings last refreshed {formatDateTime(state.snapshot.fetched_at)}
@@ -130,7 +135,7 @@ export function OpportunitiesPage() {
               <select
                 value={sort}
                 onChange={(event) => update({ sort: event.target.value === 'recent' ? '' : event.target.value })}
-                className="min-h-11 rounded-lg border border-ink-900/15 bg-white px-3 text-sm text-ink-900"
+                className="min-h-11 rounded-lg border border-accent-blue/30 bg-blue-50 px-3 text-sm text-ink-900"
               >
                 {SORT_OPTIONS.map((option) => (
                   <option key={option.id} value={option.id}>
@@ -142,7 +147,7 @@ export function OpportunitiesPage() {
           </div>
 
           {results.length === 0 ? (
-            <div className="rounded-2xl border border-ink-900/10 bg-white p-10 text-center">
+            <div className="rounded-2xl border border-blue-300/60 bg-blue-50 p-10 text-center">
               <p className="text-ink-700">No opportunities match these filters.</p>
               <p className="mt-2 text-sm text-ink-500">Try clearing a filter or searching for a broader term.</p>
             </div>
@@ -159,7 +164,7 @@ export function OpportunitiesPage() {
               <button
                 type="button"
                 onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="min-h-11 rounded-full border border-ink-900/15 px-6 text-sm font-semibold text-ink-900 transition-colors hover:bg-cream-100"
+                className="min-h-11 rounded-full border border-accent-blue/30 px-6 text-sm font-semibold text-ink-900 transition-colors hover:bg-blue-200"
               >
                 Show more
               </button>
@@ -167,6 +172,7 @@ export function OpportunitiesPage() {
           )}
         </>
       )}
-    </div>
+      </div>
+    </>
   );
 }

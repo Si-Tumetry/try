@@ -7,29 +7,35 @@ const NAV = [
   { to: '/about', label: 'About', index: '04' },
 ];
 
-export function Wordmark() {
+export function Wordmark({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
+  const text = tone === 'light' ? 'text-white' : 'text-ink-900';
+  const dot = tone === 'light' ? 'bg-blue-200' : 'bg-accent-blue';
   return (
-    <Link to="/" className="group flex items-center gap-3" aria-label="NextStep home">
-      <span className="h-2.5 w-2.5 rounded-full bg-accent-blue" aria-hidden="true" />
-      <span className="font-serif text-2xl font-medium tracking-tight text-ink-900 italic">NextStep</span>
+    <Link
+      to="/"
+      className={`group flex items-center gap-3 rounded-sm focus-visible:outline-blue-200 ${text}`}
+      aria-label="NextStep home"
+    >
+      <span className={`h-2.5 w-2.5 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="font-serif text-2xl font-medium tracking-tight italic">NextStep</span>
     </Link>
   );
 }
 
 export function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-ink-900/10 bg-cream-50/95 backdrop-blur-md">
+    <header className="sticky top-0 z-40 w-full bg-accent-blue text-white shadow-[0_1px_0_rgba(0,43,102,0.4)]">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-6 px-6 lg:px-12">
         <Wordmark />
 
-        <nav aria-label="Main" className="hidden items-center gap-8 text-[13px] font-medium tracking-wide text-ink-600 md:flex">
+        <nav aria-label="Main" className="hidden items-center gap-8 text-[13px] font-medium tracking-wide text-blue-100 md:flex">
           {NAV.map((item) => (
             <NavLink
               key={item.label}
               to={item.to}
-              className="flex items-center gap-1.5 transition-colors hover:text-ink-900"
+              className="flex items-center gap-1.5 rounded-sm transition-colors hover:text-white focus-visible:outline-blue-200"
             >
-              <span className="font-mono text-[11px] text-ink-400">{item.index}</span>
+              <span className="font-mono text-[11px] text-blue-200/80">{item.index}</span>
               <span>{item.label}</span>
             </NavLink>
           ))}
@@ -37,7 +43,7 @@ export function SiteHeader() {
 
         <Link
           to="/opportunities"
-          className="inline-flex items-center justify-center rounded-full bg-ink-900 px-4 py-2 text-xs font-semibold tracking-wide text-cream-50 transition-colors hover:bg-accent-blue"
+          className="inline-flex items-center justify-center rounded-full bg-accent-navy px-4 py-2 text-xs font-semibold tracking-wide text-white ring-1 ring-blue-200/40 transition-colors hover:bg-ink-900 focus-visible:outline-blue-200"
         >
           Explore directory
         </Link>
