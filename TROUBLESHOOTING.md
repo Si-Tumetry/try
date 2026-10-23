@@ -15,6 +15,25 @@ Commands assume the Render shell or a local shell in `backend/`. Replace `$DATAB
 3. Use the request id (`request_id`, returned in every error body) to find the matching `audit_log` rows and worker logs.
 4. If the fix changes data, take a snapshot or confirm a Render backup point before running it.
 
+Start with the triage path below to find the right section quickly:
+
+```mermaid
+flowchart TD
+    START["Something is wrong"] --> KIND{"What do you see?"}
+    KIND -- "HTTP error" --> CODE{"Which status code?"}
+    CODE -- "401 or 403" --> AUTHSEC["Authentication failures<br/>MCP authorisation failures"]
+    CODE -- "429" --> RATE["Rate limited"]
+    CODE -- "503" --> DEP["Dependency unavailable"]
+    CODE -- "500" --> LOGS["Use request_id to find<br/>logs and audit_log rows"]
+    KIND -- "Search problem" --> SEARCH{"Empty, slow or wrong?"}
+    SEARCH -- "empty" --> EMPTY["Empty search results<br/>Candidate missing from search"]
+    SEARCH -- "slow" --> SLOW["Search latency"]
+    SEARCH -- "wrong ranking" --> QUAL["Poor result quality<br/>Scores changed unexpectedly"]
+    KIND -- "Profile stuck" --> PROF["Profile stuck or failed<br/>extraction and embedding sections"]
+    KIND -- "Background jobs" --> JOBS["Celery queue backlog<br/>Tasks in failed_jobs"]
+    KIND -- "Data or privacy concern" --> PRIV["Contact details visible<br/>Deleted profile still visible<br/>Escalate as critical"]
+```
+
 ## Symptom index
 
 | Symptom | Section |

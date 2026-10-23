@@ -126,6 +126,24 @@ Refresh tokens are single-use. Reuse of a rotated refresh token revokes the whol
 
 ## 4. Ingestion pipeline
 
+```mermaid
+flowchart TD
+    IN["1. Intake<br/>form, CV upload, portfolio or GitHub link"] --> EXT["2. Extraction<br/>LLM returns JSON, delimited input"]
+    EXT --> VAL{"Schema valid and<br/>every quote found in input?"}
+    VAL -- no, retry twice --> EXT
+    VAL -- retries used up --> FAIL["status extraction_failed<br/>admin alert"]
+    VAL -- yes --> NORM["3. Normalise each skill"]
+    NORM --> ALIAS{"Alias or exact name match?"}
+    ALIAS -- yes --> ADD["profile_skills, source self"]
+    ALIAS -- no --> SIM{"Embedding similarity at least 0.80<br/>and 0.05 clear of second best?"}
+    SIM -- yes --> ADD
+    SIM -- no --> QUEUE["skill_candidates<br/>review queue"]
+    ADD --> DOC["4. Build profile document"]
+    QUEUE --> DOC
+    DOC --> EMB["Embed, store vector 1024"]
+    EMB --> ACT["status active"]
+```
+
 ### 4.1 Stages [PDF §4]
 
 | Stage | Input | Output | Failure handling |
@@ -209,6 +227,19 @@ A profile is re-embedded when any of these change: headline, bio, skills, or evi
 ---
 
 ## 5. Retrieval (RAG) pipeline [PDF §5]
+
+```mermaid
+flowchart TD
+    Q["Query and structured fields"] --> P["Stage 1 parse<br/>explicit skills are must, query mentions are nice"]
+    P --> H["Stage 2 hard filters<br/>country, active, searchable, availability, not deleted or suspended"]
+    H --> V["Stage 3a vector top 200<br/>needs requirement embedding"]
+    H --> K["Stage 3b keyword top 200"]
+    V --> F["RRF merge, k = 60"]
+    K --> F
+    F --> S["Stage 4 score top 100<br/>S_sem minmax, others per record"]
+    S --> R["Stage 5 rerank top 30<br/>reorder only, grounded rationales"]
+    R --> E["Stage 6 explain and return<br/>after min_score and limit"]
+```
 
 ### 5.1 Stage 1: parse the requirement
 
