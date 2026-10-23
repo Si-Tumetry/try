@@ -1,0 +1,29 @@
+# Render Blueprint for the web front end. The API, worker, beat, Postgres and
+# Key Value services are added here when the backend is ready to deploy
+# (see ARCHITECTURE.md §3).
+services:
+  - type: web
+    name: ypp-web
+    runtime: static
+    rootDir: .
+    buildCommand: npm install -g pnpm@12.15.0 && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000; includeSubDomains"

@@ -56,15 +56,15 @@ def build_mcp(service: TalentService) -> FastMCP:
     def search_opportunities(
         ctx: Context,
         profile_id: str,
-        country: str | None = None,
+        include_global: bool = False,
         min_score: int | None = None,
         limit: int = 10,
     ) -> dict:
-        """Match one of your own profiles to active listings."""
+        """Match one of your own profiles to listings open in your country. Set include_global to also see listings from other countries, labelled."""
         return service.search_opportunities(
             actor_from_context(ctx),
             profile_id,
-            country=country,
+            include_global=include_global,
             min_score=min_score,
             limit=limit,
         )

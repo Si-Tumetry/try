@@ -4,7 +4,7 @@ A verified talent and opportunity directory for young people, small businesses, 
 
 The platform has one search and scoring engine that is reachable through three doors:
 
-- a web and mobile app (Next.js and Flutter, built later),
+- a web app (React, in this folder) and a mobile app (Flutter, built later),
 - a REST API under `/v1`,
 - an MCP server at `/mcp` so AI agents can query the directory through typed tools.
 
@@ -43,6 +43,7 @@ The source specification is `Youth_Yellow_Pages_Technical_Design.pdf` (version 1
 | Background jobs | Celery 5 with Celery Beat for schedules |
 | Object storage | S3-compatible bucket for CVs, certificates and uploads |
 | Models | AWS Bedrock: an embedding model (Titan Text Embeddings v2, 1024 dimensions) and an LLM for extraction and explanation |
+| Web front end | React 19, TypeScript, Vite, pnpm (at the repository root) |
 | Hosting | Render (web, worker, beat, Postgres, Key Value) |
 
 ## Repository layout
@@ -58,6 +59,10 @@ The layout below is the target structure. Directories are created as the backend
 ├── TROUBLESHOOTING.md
 ├── Youth_Yellow_Pages_Technical_Design.pdf
 ├── LICENSE
+├── package.json             React web app (pnpm), Vite config, tsconfig
+├── index.html
+├── src/                     React components, data logic and tests
+├── public/                  Static assets; public/data holds the opportunities snapshot
 ├── backend/
 │   ├── config/              Django settings, ASGI entry point, URL routing
 │   ├── core/
@@ -72,6 +77,25 @@ The layout below is the target structure. Directories are created as the backend
 │   └── tests/               Unit, integration and scoring-regression tests
 └── infra/                   Render blueprint (render.yaml) and environment templates
 ```
+
+## Web front end
+
+The web app is a React single-page app at the repository root. It lists opportunities with filters for search, country, work mode and eligibility. Each card links to the employer's original posting.
+
+Prerequisites: Node.js 20.19 or newer (22 recommended) and pnpm 12.
+
+```bash
+pnpm install          # uses the committed pnpm-lock.yaml
+pnpm dev              # http://localhost:5173
+pnpm test             # filter and sort logic
+pnpm typecheck
+pnpm build            # outputs dist/
+pnpm preview          # serves dist/ at http://localhost:4173
+```
+
+The app reads `public/data/opportunities.json`. This is a snapshot of public Greenhouse job board data (copied from `backend/demo/`). Once the REST API exists, change `DATA_URL` in `src/App.tsx` to the `/v1` endpoint and the components do not need to change.
+
+Deployment: `infra/render.yaml` defines a Render static site that runs `pnpm build` and publishes `dist/`, with security headers set.
 
 ## Local setup
 

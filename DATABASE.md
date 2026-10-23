@@ -43,7 +43,7 @@ Migration `0001_extensions` runs these and fails fast with a clear message if `v
 ```mermaid
 erDiagram
     users ||--o| profiles : "has one"
-    users ||--o{ listings : "owns, employer or business"
+    users ||--o{ listings : "owns, employer, business or partner"
     users ||--o{ contact_requests : "requests"
     users ||--o{ reports : "files"
     users ||--o{ api_keys : "holds"
@@ -67,6 +67,14 @@ erDiagram
     oauth_clients ||--o{ oauth_tokens : "issues"
     skill_candidates }o--o| skills : "nearest to"
 
+    users ||--o{ attachments : "uploads"
+    profiles ||--o{ attachments : "linked"
+    users ||--o{ ingest_sources : "owns"
+    ingest_sources ||--o{ ingest_runs : "run by"
+    users ||--o{ ingest_runs : "partner runs"
+    ingest_runs ||--o{ listing_imports : "contains"
+    listing_imports }o--o| listings : "creates or updates"
+
     audit_log
     failed_jobs
 ```
@@ -87,7 +95,7 @@ Source: [PDF §3]. Columns marked **(addition)** are needed for auth and complia
 | `email` | `citext` | yes | | Unique among non-deleted rows. Nullable for phone-only accounts **(addition)** |
 | `phone` | `text` | yes | | E.164 format, unique among non-deleted rows **(addition)** |
 | `password_hash` | `text` | yes | | Argon2id. Null for OAuth-only accounts **(addition)** |
-| `role` | `text` | no | | `CHECK (role IN ('youth','employer','business','admin'))` |
+| `role` | `text` | no | | `CHECK (role IN ('youth','employer','business','admin','partner'))` **(`partner` added for institutional listing sources, see TECHNICAL.md §14)** |
 | `country` | `char(2)` | no | | `CHECK (country IN ('NG','ZA','KE','GH'))` |
 | `full_name` | `text` | yes | | Stored for account display. Never used in scoring **(addition)** |
 | `consent_terms_version` | `text` | yes | | Version of terms accepted [PDF §3] |
@@ -284,7 +292,12 @@ Source: [PDF §3]. Required skills are in `listing_skills` **(addition)** becaus
 | `type` | `text` | no | | `CHECK (type IN ('business','service','job','internship','apprenticeship'))` [PDF §3] |
 | `title` | `text` | no | | Max 140 characters |
 | `description` | `text` | no | | Max 5000 characters [PDF §3] |
-| `country` | `char(2)` | no | | `CHECK (country IN ('NG','ZA','KE','GH'))` **(addition)** |
+| `country` | `char(2)` | yes | | Primary country, the first entry of `eligible_countries`. `CHECK (country IS NULL OR country ~ '^[A-Z]{2}$')`. **(addition: no longer limited to the four pilot countries, see TECHNICAL.md §14.19)** |
+| `location_text` | `text` | yes | | Location as the source gave it. Kept for review and audit **(addition)** |
+| `eligible_countries` | `char(2)[]` | no | `'{}'` | Countries where applicants are eligible, from the location text **(addition)** |
+| `unmapped_locations` | `text[]` | no | `'{}'` | Location parts that could not be matched to a country. Non-empty means review **(addition)** |
+| `work_mode` | `text` | no | `'unspecified'` | `CHECK (work_mode IN ('onsite','hybrid','remote','onsite_or_hybrid','unspecified'))` **(addition)** |
+| `scope` | `text` | no | `'unspecified'` | `CHECK (scope IN ('in_region','remote_in_region','outside_region','remote_outside_region','unspecified'))`. TECHNICAL.md §14.19 **(addition)** |
 | `location_city` | `text` | yes | | **(addition)** |
 | `location_region` | `text` | yes | | **(addition)** |
 | `pay_min` | `numeric(14,2)` | yes | | **(addition)** |
@@ -293,6 +306,15 @@ Source: [PDF §3]. Required skills are in `listing_skills` **(addition)** becaus
 | `availability_start` | `date` | yes | | **(addition)** |
 | `status` | `text` | no | `'draft'` | `CHECK (status IN ('draft','pending_review','active','paused','closed','rejected'))` [PDF §3] |
 | `review_notes` | `text` | yes | | Admin notes, not shown to others **(addition)** |
+| `origin` | `text` | no | `'employer'` | `CHECK (origin IN ('employer','admin_import','feed'))` **(addition, TECHNICAL.md §14)** |
+| `source_key` | `text` | yes | | Partner source, for example `kcau-placement-csv`. Null for employer-posted listings **(addition)** |
+| `external_id` | `text` | yes | | Identifier in the source system, used for dedupe and updates **(addition)** |
+| `source_url` | `text` | yes | | Link to the original posting. `CHECK` http or https **(addition)** |
+| `department` | `text` | yes | | For example a school or faculty name, shown in search filters **(addition)** |
+| `expires_at` | `timestamptz` | yes | | Listing closes automatically after this time. Default for feeds with no closing date: first seen plus 30 days **(addition, default)** |
+| `first_seen_at` | `timestamptz` | yes | | When an ingested listing first appeared in a source **(addition)** |
+| `last_seen_at` | `timestamptz` | yes | | Last sync in which the listing appeared in the source **(addition)** |
+| `missing_runs` | `smallint` | no | `0` | Consecutive full syncs in which the listing was absent. Closes at 2 **(addition, default)** |
 | `embedding` | `vector(1024)` | yes | | [PDF §3] |
 | `embedding_stale_at` | `timestamptz` | yes | | **(addition)** |
 | `search_tsv` | `tsvector` | no | generated | Generated from `title` and `description` **(addition)** |
@@ -303,7 +325,9 @@ Source: [PDF §3]. Required skills are in `listing_skills` **(addition)** becaus
 Constraints:
 
 - `CHECK (pay_min IS NULL OR pay_max IS NULL OR pay_min <= pay_max)`
-- Only users with role `employer` or `business` may own a listing. A `CHECK` cannot reference another table, so this rule is enforced in the `listings` service and covered by a test **(note)**
+- Only users with role `employer`, `business` or `partner` may own a listing. A `CHECK` cannot reference another table, so this rule is enforced in the `listings` service and covered by a test **(note)**
+- Partner-owned listings have `origin` set to `admin_import` or `feed`. Employers post with `origin = 'employer'`. Only ingestion may set the other values.
+- `UNIQUE (source_key, external_id) WHERE source_key IS NOT NULL AND deleted_at IS NULL` prevents the same source record from appearing twice **(addition)**.
 
 Indexes:
 
@@ -605,6 +629,101 @@ Dead-letter record for Celery tasks that exhaust retries. **(addition)**
 
 ---
 
+### 4.18 `ingest_runs`
+
+One row per sync of a partner source, either a CSV upload or a scheduled feed pull. **(addition, TECHNICAL.md §14)**
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | | PK |
+| `partner_user_id` | `uuid` | no | | FK `users.id`, role `partner` |
+| `source_key` | `text` | no | | FK `ingest_sources.source_key`. For example `kcau-placement-csv` |
+| `mode` | `text` | no | | `CHECK (mode IN ('csv','feed'))` |
+| `status` | `text` | no | `'running'` | `CHECK (status IN ('running','ok','held','failed'))`. `held` means the run was stopped by a safety check |
+| `rows_seen` | `integer` | no | `0` | |
+| `rows_published` | `integer` | no | `0` | |
+| `rows_rejected` | `integer` | no | `0` | |
+| `hold_reason` | `text` | yes | | For example `volume_drop` |
+| `started_at` | `timestamptz` | no | `now()` | |
+| `finished_at` | `timestamptz` | yes | | |
+
+Constraints: `CHECK (rows_published + rows_rejected <= rows_seen)`.
+
+### 4.19 `listing_imports`
+
+One row per source record received in a run. Stores the job fields only, with contact fields removed before storage. **(addition, TECHNICAL.md §14)**
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | | PK |
+| `run_id` | `uuid` | no | | FK `ingest_runs.id` ON DELETE CASCADE |
+| `external_id` | `text` | no | | Derived from the source record, see TECHNICAL §14.4 |
+| `payload` | `jsonb` | no | | Mapped job fields only. Contact fields are dropped at intake |
+| `payload_hash` | `text` | no | | SHA-256 of canonical `payload`. Detects changes between runs |
+| `status` | `text` | no | `'received'` | `CHECK (status IN ('received','rejected','duplicate','unchanged','published','updated'))` |
+| `reject_reason` | `text` | yes | | Set when `status = rejected` |
+| `listing_id` | `uuid` | yes | | FK `listings.id`, set when published or updated |
+| `received_at` | `timestamptz` | no | `now()` | |
+
+Constraints and indexes:
+
+- `UNIQUE (run_id, external_id)`
+- `ix_listing_imports_external` on `(external_id)`
+
+Retention: rows are purged 90 days after `received_at` **(default)**. Listings keep their own data after that.
+
+### 4.20 `attachments`
+
+Files uploaded by candidates. A file is used only when `scan_status = 'clean'`. Defined in TECHNICAL.md §15. **(addition)**
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | | PK |
+| `owner_user_id` | `uuid` | no | | FK `users.id` |
+| `profile_id` | `uuid` | yes | | FK `profiles.id` ON DELETE CASCADE. Null until linked |
+| `kind` | `text` | no | | `CHECK (kind IN ('cv','certificate','cover_letter','portfolio','linkedin_export','other'))` |
+| `display_name` | `text` | no | | Sanitised client filename, for display only. Max 140 characters |
+| `storage_key` | `text` | no | | Random UUID-based key. Unique |
+| `content_type` | `text` | no | | Set from the detected type, not the client's claim. `CHECK (content_type IN ('application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'))` |
+| `size_bytes` | `integer` | no | | `CHECK (size_bytes > 0 AND size_bytes <= 5242880)` |
+| `sha256` | `text` | no | | Declared by the client and checked against the stored object |
+| `scan_status` | `text` | no | `'pending'` | `CHECK (scan_status IN ('pending','clean','infected','rejected','error'))` |
+| `extracted_text` | `text` | yes | | CV text for profile extraction. Max 50000 characters. Untrusted data |
+| `created_at` | `timestamptz` | no | `now()` | |
+| `scanned_at` | `timestamptz` | yes | | |
+| `deleted_at` | `timestamptz` | yes | | |
+
+Indexes:
+
+- `ix_attachments_owner` on `(owner_user_id)` WHERE `deleted_at IS NULL`
+- `ix_attachments_scan` on `(scan_status)` WHERE `scan_status = 'pending'`
+
+### 4.21 `ingest_sources`
+
+Registry of every listing source, including CSV partners, feeds, Greenhouse boards and scraped pages. A source with no permission reference is not run. TECHNICAL.md §14.13 and §14.14. **(addition)**
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `source_key` | `text` | no | | PK. For example `greenhouse-acme-ng`, `demo-kcau-careers-page` |
+| `partner_user_id` | `uuid` | yes | | FK `users.id`. Owner of the listings. Null for connectors that have no partner account yet |
+| `kind` | `text` | no | | `CHECK (kind IN ('csv','feed','greenhouse','scraper','demo'))` |
+| `allowed_hosts` | `text[]` | no | | Only these hosts may be contacted |
+| `permission_ref` | `text` | yes | | Agreement reference, or the date and page where terms were checked. Required before `enabled` can be true |
+| `robots_checked_at` | `timestamptz` | yes | | For scraper and page sources |
+| `rate_limit_seconds` | `smallint` | no | `5` | `CHECK (rate_limit_seconds >= 1)` |
+| `selector_version` | `text` | yes | | Scraper only |
+| `enabled` | `boolean` | no | `false` | Kill switch |
+| `environment` | `text` | no | | `CHECK (environment IN ('dev','demo','staging','production'))` |
+| `created_at` | `timestamptz` | no | `now()` | |
+| `updated_at` | `timestamptz` | no | `now()` | |
+
+Constraints:
+
+- `CHECK (NOT enabled OR permission_ref IS NOT NULL)`
+- `CHECK (kind <> 'demo' OR environment IN ('dev','demo'))`
+
+The second constraint is the database half of the environment guard in TECHNICAL.md §14.17.
+
 ## 5. Relationship summary
 
 | Parent | Child | On delete |
@@ -712,6 +831,8 @@ Rules:
 11. `0011_audit_log`
 12. `0012_indexes_hnsw` (concurrent)
 13. `0013_rls_policies`
+14. `0014_ingestion`: `ingest_runs`, `listing_imports`, `ingest_sources`, new `listings` columns, and the `partner` role value (TECHNICAL.md §14)
+15. `0015_attachments`: `attachments` (TECHNICAL.md §15)
 
 ### 9.2 HNSW index build
 

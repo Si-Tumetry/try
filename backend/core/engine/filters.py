@@ -16,7 +16,19 @@ def passes_candidate_filters(cand: Candidate, req: Requirement) -> bool:
     return True
 
 
-def passes_listing_filters(listing: Listing, country: str | None) -> bool:
-    if listing.deleted or listing.status != "active":
+IN_COUNTRY_SCOPES = frozenset({"in_region", "remote_in_region"})
+
+
+def passes_listing_filters(listing: Listing, country: str | None, *, include_global: bool = False) -> bool:
+    """Default youth view: listings open to applicants in `country` (TECHNICAL.md §14.19).
+
+    `include_global` shows every active listing, including ones outside the applicant's country.
+    Listings awaiting review are never shown.
+    """
+    if listing.deleted or listing.status != "active" or listing.needs_review:
         return False
-    return country is None or listing.country == country
+    if include_global:
+        return True
+    if country is None:
+        return False
+    return country in listing.eligible_countries and listing.scope in IN_COUNTRY_SCOPES

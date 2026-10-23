@@ -125,6 +125,8 @@ def build_candidates(embedder: HashingEmbedder) -> list[Candidate]:
 def build_listings(embedder: HashingEmbedder) -> list[Listing]:
     def listing(**kw):
         text = f"{kw['title']}\n{kw['description']}"
+        kw.setdefault("eligible_countries", (kw["country"],))
+        kw.setdefault("scope", "in_region")
         return Listing(**kw, embedding=embedder.embed(text))
 
     return [

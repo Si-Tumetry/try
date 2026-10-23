@@ -82,7 +82,7 @@ class Listing:
     type: str
     title: str
     description: str
-    country: str
+    country: str | None
     status: str
     skills: tuple[SkillReq, ...] = ()
     location_city: str | None = None
@@ -91,3 +91,14 @@ class Listing:
     pay_max: float | None = None
     deleted: bool = False
     embedding: tuple[float, ...] | None = None
+    location_text: str = ""
+    eligible_countries: tuple[str, ...] = ()
+    work_mode: str = "unspecified"
+    scope: str = "unspecified"
+    needs_review: bool = False
+    source_key: str | None = None
+    external_id: str | None = None
+    source_url: str | None = None
+    employer_name: str | None = None
+    expires_at: date | None = None
+    demo: bool = False

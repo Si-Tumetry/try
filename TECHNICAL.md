@@ -695,3 +695,305 @@ Required test cases before any release:
 | `NEXT_PROJECT_SOURCE` | taxonomy table | **(default)** |
 | `DELETION_WINDOW_DAYS` | 30 | **(addition, pending legal review)** |
 | `FAILED_LLM_RETRIES` | 2 | **(default)** |
+
+---
+
+## 14. Opportunity ingestion
+
+This section specifies how opportunity listings from partner institutions enter the directory. Employer-posted listings go through `POST /v1/listings` and the review step described in §14.6, and are not covered here.
+
+### 14.1 Scope and phases
+
+| Phase | Method | Status |
+|---|---|---|
+| 1, pilot | Admin uploads a CSV from a partner's placement office. The CSV goes through the same pipeline as feeds | Build first |
+| 1, demo | Real snapshot of public Greenhouse postings from six employer boards (§14.16) | Demo environments only |
+| 2a | Greenhouse Job Board API connector, one connector per employer board | Build after phase 1. Source terms checked per §14.13 |
+| 2b | Scheduled feed pull from a partner that has agreed to provide one | Build after a written agreement |
+| 2c | Generic web scraper for employer career pages | Only under the registry rules in §14.14. Each source needs a recorded permission check |
+| Not planned | LinkedIn job scraping, or scraping any site without a permission check | Excluded. See §14.13 |
+
+### 14.2 Source assessment: KCA University (first partner)
+
+Findings from public sources, checked during design:
+
+| Source | What we found | Decision |
+|---|---|---|
+| Public careers page, `kcau.ac.ke/career/` | Server-rendered list of vacancies. Each row shows title, school, employment type, campus and a details link. No closing date or salary in the list. Details pages were not reviewed | Use only with written permission. Until then, the placement office CSV is the input |
+| `robots.txt` on `kcau.ac.ke` | Has no `Disallow` rule for `/career/` and points to a sitemap | Not a permission to republish. Permissive robots rules do not replace a data agreement |
+| UNISCOO career portal, `uniscoo.org` | KCA's public post directs students there for career services and internships. The site could not be reached when checked, so its format and terms are unknown | Investigate with the placement office. Do not integrate until checked |
+| KCA recruitment portal, `careers.kcau.ac.ke` | Requires a login | Out of scope |
+| Third-party aggregators that repost KCA vacancies | Secondary copies with unknown freshness | Not a source. We do not republish copies |
+
+Next step: contact the KCA placement office (`placement@kca.ac.ke`, the address published in their own career notice) to request a CSV export or feed, a named contact for errors, and written consent for the directory to publish these listings.
+
+### 14.3 Pipeline
+
+```mermaid
+flowchart TD
+    IN["Source records<br/>CSV upload or feed pull"] --> RUN["Create ingest_runs row"]
+    RUN --> SAFE{"Volume check<br/>at least 50 percent of last run?"}
+    SAFE -- no --> HOLD["Run status held<br/>nothing is closed"]
+    SAFE -- yes --> MAP["Map fields, drop contact fields"]
+    MAP --> V{"Valid?<br/>title, description at least 50 chars, location parsed"}
+    V -- no --> REJ["listing_imports status rejected<br/>reason stored"]
+    V -- yes --> HASH{"Known external_id?"}
+    HASH -- new --> SK["Extract skills from description<br/>map to taxonomy"]
+    HASH -- same hash --> UNCH["unchanged<br/>refresh last_seen_at"]
+    HASH -- changed --> UPD["updated<br/>re-extract skills"]
+    SK --> UNK{"Unknown skills?"}
+    UNK -- yes --> RQ["skill_candidates review queue"]
+    UNK -- no --> PEND["listing status pending_review"]
+    RQ --> PEND
+    UPD --> PEND
+    PEND --> ADM{"Admin approves?"}
+    ADM -- yes --> ACT["status active<br/>embed title and description"]
+    ADM -- no --> RJ2["status rejected<br/>review_notes set"]
+    UNCH --> DONE["Run finished"]
+    ACT --> DONE
+    RJ2 --> DONE
+    REJ --> DONE
+```
+
+### 14.4 Field mapping
+
+The KCA careers page does not follow the schema.org `JobPosting` format, so the mapping is written against a generic partner record. The same mapping applies to a CSV with these columns, and to a feed that uses `JobPosting` where it is available.
+
+| Partner field | Listing column | Rule |
+|---|---|---|
+| Title | `title` | Required. Trimmed. Title case applied only when the title is all uppercase |
+| School or department | `department` | Stored as given |
+| Employment type | `type` | `Full Time` or `Part Time` maps to `job`. A title containing "intern" maps to `internship`. A title containing "apprentice" maps to `apprenticeship`. Admin can override in review |
+| Campus or location | `location_city`, `location_region` | Looked up in a campus table. Initial entries: Main Campus (Ruaraka) maps to Nairobi, Nairobi. Town Campus maps to Nairobi, Nairobi. Kitengela Campus maps to Kitengela, Kajiado. Western Campus maps to Kisumu, Kisumu. An unknown campus is rejected, not guessed |
+| Location text | `location_text`, `eligible_countries`, `scope`, `work_mode` | Parsed into countries and a scope, §14.19. A listing is not rejected for being outside NG, ZA, KE or GH. Locations that cannot be parsed go to review with the text kept |
+| Details URL | `source_url` | Must be https. Required for feed records. Optional for CSV |
+| Description | `description` | Required, minimum 50 characters, HTML stripped. Missing descriptions are rejected |
+| Closing date | `expires_at` | If present, used. If absent, first seen plus 30 days |
+| Row identifier or details URL | `external_id` | CSV: the partner's own row id if provided, otherwise the details URL. Feed: the feed's identifier. Hashed with `source_key` for the unique index |
+| Contact name, email, phone | Not stored | Dropped at intake. Never reaches `listing_imports.payload` |
+
+The required skills are not in any partner field. They are extracted from the description with the same guardrails as profile extraction (TECHNICAL §4.2), then matched to the taxonomy with §4.3. Each matched skill becomes a `listing_skills` row. Skills named in the title are `must_have` with level 3. Other matched skills are nice-to-have with level 2. These defaults are shown to the admin in review and can be changed there.
+
+### 14.5 Dedupe, change detection and closing
+
+- **Identity:** a listing is identified by `(source_key, external_id)`. The unique index enforces this.
+- **Change detection:** `payload_hash` is compared with the previous run. Unchanged records only refresh `last_seen_at` and reset `missing_runs`. Changed records re-run skill extraction and return to `pending_review`.
+- **Missing records:** after a full sync, a listing absent from the source gets `missing_runs + 1`. At 2, status becomes `closed`. Listings are not deleted, so applications and matches keep their history.
+- **Expiry:** a daily job sets `status = closed` for active listings whose `expires_at` has passed.
+- **Safety hold:** if a run sees fewer than 50 percent of the rows of the previous successful run, the run is set to `held`. Nothing is closed, and an admin is alerted. This protects against a broken feed closing every job.
+
+### 14.6 Review rules
+
+- Every ingested listing starts as `pending_review`. Automatic publication is not allowed in phase 1 or 2.
+- Reviewers see the source record, the mapped fields, the extracted skills, and any unknown skills.
+- Rejection reasons are stored in `review_notes`. Listing reports (PDF §9) still apply after publication.
+- A partner's listings are reviewed in full for the first three runs. Relaxing review for a partner needs a new decision record in ARCHITECTURE.md §8.
+
+### 14.7 Partner accounts
+
+- Each partner organisation has one `users` row with role `partner`. The KCA account owns all KCA listings.
+- A partner cannot search candidates, read profiles, or call `POST /v1/listings`. Their only write path is ingestion.
+- Ingestion runs with `Actor(role="partner", door="worker")` and the scope `write:listings` limited to that partner's own listings.
+- Partner accounts are created by an admin after a written agreement is on file. The agreement reference is stored on the account.
+
+### 14.8 Fetch rules for feeds (phase 2)
+
+These apply only to a feed the partner has agreed to provide. They are not a basis for fetching pages that the partner has not agreed to.
+
+- Identify the client with a user agent that names the product and a contact address.
+- At most one request per 5 seconds per source. Honour `429` and `Retry-After`.
+- Timeouts: connect 5 seconds, read 15 seconds, total 30 seconds (HTTPX).
+- Maximum response size 2 MB. Responses larger than that are rejected, not truncated.
+- Only the host in the partner's configuration is allowed. Redirects to other hosts are refused. Private and loopback addresses are blocked, as in §4.4.
+- `robots.txt` is checked and honoured for any page-based source, even where a feed exists.
+
+### 14.9 Failure handling
+
+| Failure | Behaviour |
+|---|---|
+| Fetch timeout or `5xx` | Retried 3 times with exponential backoff. Then the run is `failed`, recorded in `failed_jobs`, and an alert is sent |
+| `429` from the source | Wait for `Retry-After`. Count as a retry |
+| Malformed CSV row | Row rejected with the reason. The rest of the run continues |
+| Malformed feed (not parseable) | Run `failed`. Nothing changed |
+| Volume drop | Run `held`. Nothing closed. Admin confirms before the next run |
+| Skill extraction fails | Listing stays `pending_review` with `review_notes = extraction failed`. Retried once |
+
+### 14.10 Tasks and schedule
+
+| Task | Queue | Trigger |
+|---|---|---|
+| `ingest_csv_batch(run_id)` | `ingest` | Admin uploads a CSV |
+| `pull_partner_feed(source_key)` | `ingest` | Celery Beat, daily at 01:00 UTC (phase 2) |
+| `expire_listings` | `maintenance` | Daily at 02:30 UTC |
+| `purge_listing_imports` | `maintenance` | Daily at 03:30 UTC. Removes `listing_imports` older than 90 days |
+
+All tasks are idempotent, keyed on `(run_id, external_id)` or `(source_key, daily run date)`.
+
+### 14.11 Metrics
+
+Per run: `rows_seen`, `rows_published`, `rows_rejected`, `rows_unchanged`, and run duration. Per partner: time from ingestion to publication, and rejection rate by reason. A rejection rate above 30 percent for a partner triggers a review of the mapping, not of the partner.
+
+### 14.12 Open items
+
+| Item | Owner | Needed by |
+|---|---|---|
+| Request CSV or feed from the KCA placement office | Product | Before the pilot |
+| Written agreement covering publication of KCA listings | Legal | Before any listing goes live |
+| Check the UNISCOO portal's terms and format | Product | Before phase 2 |
+| Confirm KCA's data protection notice covers the directory | Legal | Before the pilot |
+| Confirm campus-to-location table with KCA | Product | Before the first import |
+
+### 14.13 Source policy
+
+Every source is checked before it is connected. The decision and its basis are recorded in the source registry (§14.14).
+
+| Source | Decision | Basis |
+|---|---|---|
+| Greenhouse Job Board API (`boards-api.greenhouse.io`) | **Use.** One connector per employer board, for employers inside and outside Africa | Official GET endpoints, no authentication. Checked live on six boards (§14.16): each returns JSON with `title`, `location.name`, `absolute_url`, `updated_at`, `application_deadline`, and `content` with `content=true`. Confirm Greenhouse's terms for showing employer postings in a third-party directory before listing at scale |
+| Lever public postings | Investigate | Not checked in this design |
+| LinkedIn job pages and job data | **Not a source** | LinkedIn's User Agreement §8.2 prohibits crawlers and scraping of the Services, and copying or using information obtained from them through third parties. The Job Posting API is different: it lets approved ATS and job-distribution partners push jobs *into* LinkedIn, and it requires partner approval under the Job Posting API Terms. It does not give us job data, so it cannot be a listings source. Verified against LinkedIn's API documentation and terms |
+| LinkedIn profiles of candidates | **Candidate-led only** | Two routes. (a) The candidate uploads their own LinkedIn PDF export as a CV attachment (§15). (b) Phase 3: candidate-initiated sign-in through LinkedIn's official developer program, with scopes and terms verified first. Neither route scrapes LinkedIn |
+| KCA University careers page and UNISCOO | Agreement first. Interim manual CSV | §14.2 |
+| Employer career pages (other) | Generic scraper, only under §14.14 | Permission recorded per source |
+| Job aggregators that repost listings | **Not a source** | Secondary copies of unknown age. We do not republish them |
+
+Why this matters for the goal of a range of opportunities: Greenhouse covers employers worldwide, so the directory can show roles from outside Africa as well as inside it. Each listing records where it is open to applicants (§14.19), and youth search defaults to the listings open in their own country.
+
+### 14.14 Web scraper rules
+
+A generic scraper is allowed for an employer career page only when every rule below holds. The scraper is a connector behind the same pipeline as feeds, so it inherits the safety hold (§14.5), review (§14.6) and failure handling (§14.9).
+
+1. **Registry entry.** Each source has a row in `ingest_sources` with: `source_key`, the allowed host list, the owner, the permission reference (agreement reference, or the date and page where the site's terms were checked), the robots decision, the rate limit, the selector version, and an `enabled` flag. A source without a permission reference is not run.
+2. **robots.txt.** Fetched before each run and cached for 24 hours. Paths disallowed for our user agent are never fetched. Where robots.txt disallows a path, the source is skipped. Nobody overrides the rule for a single run. The standard is RFC 9309.
+3. **Identification and rate.** A user agent naming the product and a contact address. At most one request per 5 seconds per host. `429` and `Retry-After` honoured.
+4. **Scope of fetching.** Public listing pages and the detail pages linked from them. No logins, no forms, no search endpoints, no paywalled or gated pages, no CAPTCHA handling.
+5. **Fail closed on structure change.** Each run checks that the expected selectors exist and that the record count is within 50 percent of the previous successful run. Otherwise the run is `held`. Nothing is closed.
+6. **Data kept.** Job fields only, as in §14.4. Personal data on the page (named contacts, photographs) is dropped.
+7. **Kill switch.** Setting `enabled = false` stops a source at the next scheduled run.
+8. **Tests.** Each selector set is tested against saved HTML snapshots of the page. Snapshots are refreshed when the selector version changes.
+
+### 14.15 Greenhouse connector mapping
+
+Board-level pull: `GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true`, plus `pay_transparency=true` where pay is shown. Each employer that opts in provides its board token, and the token is recorded in the registry.
+
+| Greenhouse field | Listing field | Rule |
+|---|---|---|
+| `id` | `external_id` | Post identifier. Used with `source_key` as the unique key. `internal_job_id` is not used |
+| `title` | `title` | Required |
+| `location.name` | `location_text`, `eligible_countries`, `scope`, `work_mode`, `unmapped_locations` | Free text, one or more `;`-separated places. Each place is matched to a country (names and a city table). Places that cannot be matched are kept in `unmapped_locations` and the listing goes to review. Scope and eligibility rules in §14.19 |
+| `absolute_url` | `source_url` | Must be https |
+| `content` | `description` | HTML sanitised. Minimum 50 characters |
+| `departments[].name` | `department` | First department name |
+| `application_deadline` | `expires_at` | If present |
+| `updated_at` | Change detection | Compared with the stored `payload_hash` |
+| `pay_input_ranges[]` | `pay_min`, `pay_max`, `pay_currency` | Values are in cents. Divide by 100. Currency from `currency_type` |
+| `metadata`, `questions`, `data_compliance` | Not stored | Not needed for listings |
+
+Applying: the Greenhouse application endpoint needs the employer's own Job Board API key and must be called from our server. We do not hold employer keys in phase 2a. A youth applies through `absolute_url`, and the outcome is recorded manually as an application event (§6.5 in ARCHITECTURE.md).
+
+### 14.16 Demo data
+
+The demo uses real, public postings, not samples. The snapshot was taken on the date in its `fetched_at` field from six Greenhouse boards:
+
+| Employer | Board token | Postings | In region (onsite or remote, NG, ZA, KE, GH) | Notes |
+|---|---|---|---|---|
+| Moniepoint | `moniepoint` | 141 | 81 | Nigerian fintech. Mostly Nigerian roles, plus remote roles open to NG, ZA and KE, and remote roles elsewhere |
+| Jumia | `jumia` | 29 | 18 | Pan-African e-commerce. Roles in NG, GH and KE, and some outside the region |
+| ALX Africa | `alxafrica` | 12 | 6 | Tech education. Roles in ZA, NG and GH. Six have no stated country |
+| One Acre Fund (Kenya) | `oafkenya` | 7 | 7 | Agricultural finance. Kenya roles |
+| One Acre Fund (Global) | `oneacrefundglobal` | 4 | 3 | Roles across East and West Africa, including Kenya and Nigeria |
+| impact.com | `impact` | 79 | 23 | Partnership software. Most roles are outside the region, including some in South Africa |
+
+Counts are from the snapshot taken on `fetched_at`. They will change as the employers post and close roles.
+
+- File: `backend/demo/greenhouse_snapshot.json`. Each listing keeps the employer's `absolute_url`, which is the source of truth, and the employer's own description with HTML removed.
+- The snapshot is a demonstration copy. The connector refreshes it. Nobody edits it by hand.
+- The demo loader is a seed command, allowed only in `demo` and `dev` (§14.17). Every API response for these listings includes `"source": "greenhouse"`, the employer name, and `"demo": true`, so clients can label them.
+- Attribution: each listing shows the employer and links to the original posting. The directory does not claim to be the employer or to take applications for them. Applying happens on the employer's page (§14.15).
+- The KCA University listings are not in the demo. They wait for the placement office's agreement (§14.2).
+- Locations the parser could not read are in `unmapped_locations`. In the current snapshot those are eight places, such as Tokyo, Oslo, Porto, and "Africa" on its own. They go to review and are not shown until someone assigns their country.
+
+### 14.17 Environment guard
+
+The demo seed command checks `APP_ENV`. It refuses to run when `APP_ENV` is `production`, and it refuses to write a `demo` listing into any environment other than `demo` or `dev`. The check is in the command and is covered by a test.
+
+### 14.18 Supply coverage
+
+- Scoring ignores the source of a listing. Source affects only what is shown, never the score.
+- A monthly report lists active listings by source, country and campus or city. This is how we see whether coverage is narrow.
+- A source that provides fewer than 5 active listings for 3 consecutive months is reviewed for whether it is worth keeping.
+
+### 14.19 Eligibility and regional scope
+
+A listing is not rejected for being outside NG, ZA, KE or GH. Each listing records where it is open to applicants. Youth search defaults to listings open in the youth's own country, and a global view shows everything with its scope labelled.
+
+| Scope | Meaning | Example | Default youth search | Global view |
+|---|---|---|---|---|
+| `in_region` | Onsite or hybrid in NG, ZA, KE or GH | Lagos, Nigeria | Shown when the youth's country is in `eligible_countries` | Shown |
+| `remote_in_region` | Remote, and the source names NG, ZA, KE or GH | Remote, Kenya | Shown when the youth's country is named | Shown |
+| `outside_region` | Onsite or hybrid in another country | London, United Kingdom | Hidden | Shown, labelled "not in your country" |
+| `remote_outside_region` | Remote, and the source names only other countries | Remote, Spain | Hidden | Shown, labelled "not in your country" |
+| `unspecified` | No country can be read | Remote, or Africa | Hidden | Shown, labelled "eligibility unclear" |
+
+Rules:
+
+- `eligible_countries` comes from the location text (§14.15). A listing with several named countries is shown to youth in each of them.
+- A remote role counts as open to a country only when the source names that country. We do not infer eligibility.
+- Scope affects which listings are returned. It never affects the score (§14.18).
+- Unmapped locations go to review. The listing is not shown in the default search until a country is assigned.
+
+---
+
+## 15. Attachments and CV uploads
+
+Attachments are files a candidate uploads: a CV, certificates, a cover letter, a portfolio file, or a LinkedIn PDF export. Attachments are never used until they pass a scan.
+
+### 15.1 Rules
+
+| Rule | Detail |
+|---|---|
+| Accepted types | PDF, DOCX. Checked from the file's leading bytes (magic numbers), not from the extension |
+| Maximum size | 5 MB per file |
+| Names | The client's filename is stored for display only. Sanitised. Storage keys are random UUIDs |
+| Access | Never served directly. Downloads use a short-lived signed URL (5 minutes) for the owner, or for an employer the candidate has contacted |
+| Scan | Every file is scanned before it is marked `clean`. Only `clean` files can be linked to a profile, evidence or application |
+| Text extraction | CV text is extracted for profile extraction (§4). It is untrusted data and follows the rules in §4.2 |
+| Deletion | Removed from storage when the profile is purged (§6 in DATABASE.md) |
+
+### 15.2 Upload flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Candidate app
+    participant API as REST /v1/attachments
+    participant DB as Postgres
+    participant OBJ as Object storage
+    participant SCAN as Scan worker
+
+    C->>API: POST /v1/attachments with kind, filename, size, sha256
+    API->>API: check size and declared type
+    API->>DB: insert attachments row, scan_status pending
+    API-->>C: 201 with id and signed upload URL, valid 5 minutes
+    C->>OBJ: PUT file to signed URL
+    C->>API: POST /v1/attachments/{id}/complete
+    API->>OBJ: confirm object exists and size matches
+    API->>SCAN: enqueue scan_attachment
+    SCAN->>OBJ: read file
+    SCAN->>SCAN: check magic bytes and malware scan
+    alt clean
+        SCAN->>DB: scan_status clean
+        SCAN->>DB: extract text for CVs
+    else infected or wrong type
+        SCAN->>DB: scan_status infected or rejected
+        SCAN->>OBJ: delete object
+    end
+```
+
+### 15.3 Data
+
+The `attachments` table is defined in DATABASE.md §4.20.
+
+### 15.4 LinkedIn and other exports
+
+A candidate who wants their LinkedIn profile used in matching exports it from LinkedIn themselves, as a PDF, and uploads it as a CV. The file is the candidate's own data, and the candidate chooses to share it. We do not fetch LinkedIn pages on the candidate's behalf. The same applies to other sites: the candidate downloads, we ingest the file they gave us.

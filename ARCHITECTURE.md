@@ -59,7 +59,8 @@ Actors:
 | Youth | `youth` | Create profile, upload evidence, set consent, accept contact requests, search opportunities |
 | Employer | `employer` | Search talent, publish listings, record outcomes |
 | Business | `business` | Publish service listings, search talent (same rules as employer) |
-| Admin | `admin` | Review unknown skills, verify employers, handle reports |
+| Admin | `admin` | Review unknown skills, verify employers, handle reports, review ingested listings |
+| Partner | `partner` | Institution account. Its listings arrive by CSV or feed, never by the REST listing endpoint. See TECHNICAL.md §14 |
 | AI agent | (OAuth client) | Calls MCP tools within granted scopes |
 
 ---
@@ -201,6 +202,12 @@ Celery tasks that must not block a request:
 | `verify_evidence` | Evidence attached | `evidence.verified` and `verified_by` |
 | `reindex_stale` | Nightly (Beat) | Re-embeds records whose embedding is older than their last change |
 | `purge_deleted` | Daily (Beat) | Hard-deletes data for accounts past the deletion window |
+| `ingest_csv_batch` | Admin uploads a partner CSV | Creates and updates listings from a run, see TECHNICAL.md §14 |
+| `pull_partner_feed` | Daily (Beat), phase 2 only | Pulls a partner feed under a written agreement |
+| `expire_listings` | Daily (Beat) | Closes listings past `expires_at` and listings absent from two full syncs |
+| `pull_greenhouse_board` | Daily (Beat), per enabled source | Connector for one employer's Greenhouse board, TECHNICAL.md §14.15 |
+| `scrape_registered_page` | Daily (Beat), only for enabled scraper sources | Generic scraper, TECHNICAL.md §14.14 |
+| `scan_attachment` | Triggered by upload completion | Checks file type and malware before the attachment is marked clean, TECHNICAL.md §15.2 |
 
 ---
 
@@ -228,6 +235,8 @@ Full request and response contracts are not part of this document. This section 
 | `POST /v1/contact-requests/{id}/accept` **(addition)** | Candidate accepts; contact details are released [PDF §7] | `contact` |
 | `POST /v1/reports` **(addition)** | Report a profile or listing [PDF §9, §12] | `reports` |
 | `POST /v1/employers/verification` **(addition)** | Submit business registration for checking [PDF §9] | `verification` |
+| `POST /v1/attachments` **(addition)** | Start a CV or certificate upload. Returns a signed upload URL valid for 5 minutes, TECHNICAL.md §15 | `attachments` |
+| `POST /v1/attachments/{id}/complete` **(addition)** | Confirm an upload and start the scan | `attachments` |
 | `GET /v1/admin/skill-candidates` **(addition)** | Review queue for unknown skills [PDF §4] | `skills` (admin) |
 | `POST /v1/admin/skill-candidates/{id}/decision` **(addition)** | Approve (adds to taxonomy) or reject | `skills` (admin) |
 
@@ -484,6 +493,10 @@ Personal data regulation applies in all four countries: Kenya's Data Protection 
 | D9 | Celery with Redis broker | Standard, supported on Render Key Value | Jobs must be idempotent |
 | D10 | Object storage outside Render | Render has no S3-style object storage | Second provider to configure and monitor |
 | D11 | Scoring weights are starting values, versioned | Weights are not yet calibrated [PDF §6] | Any change bumps `scoring_version` and must pass the regression suite |
+| D12 | Opportunity data enters by admin CSV first, then official connectors (Greenhouse Job Board API), then feeds under a written agreement. Generic scraping only under the registry rules in TECHNICAL.md §14.14 | Partner pages are not ours to republish without permission. Greenhouse publishes board data for this purpose. See TECHNICAL.md §14 | Each source needs a permission reference before it runs. Scrapers fail closed on structure change |
+| D13 | LinkedIn is not a listings source. Its Job Posting API pushes jobs into LinkedIn for approved partners and gives no job data to us. Candidate LinkedIn data arrives only as a file the candidate exports, or through official sign-in once verified | LinkedIn's User Agreement §8.2 prohibits scraping and third-party use of its data. The Job Posting API requires partner approval and is for posting, not sourcing. See TECHNICAL.md §14.13 | Matching LinkedIn-based candidates depends on exports or a later official sign-in integration |
+| D15 | Listings are not limited to the four pilot countries. Each listing records eligible countries and a scope, and youth search defaults to listings open in the youth's country | Greenhouse covers employers worldwide, and the goal is a range of opportunities. See TECHNICAL.md §14.19 | Listing model stores eligibility. Search needs a scope filter. Scoring ignores scope |
+| D14 | Attachments are scanned before use, and downloads use short-lived signed URLs | CVs contain personal data and may carry malware. See TECHNICAL.md §15 | Uploads add a scan step and a status lifecycle before a file can be linked |
 
 ---
 

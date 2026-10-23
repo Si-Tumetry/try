@@ -80,13 +80,13 @@ class TalentService:
         actor: Actor,
         profile_id: str,
         *,
-        country: str | None = None,
+        include_global: bool = False,
         min_score: int | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        args = {"profile_id": profile_id, "country": country, "min_score": min_score, "limit": limit}
+        args = {"profile_id": profile_id, "include_global": include_global, "min_score": min_score, "limit": limit}
         return self._audited(actor, "search_opportunities", args, lambda: self._search_opportunities(
-            actor, profile_id, country, min_score, limit))
+            actor, profile_id, include_global, min_score, limit))
 
     def get_skill_gap(self, actor: Actor, listing_id: str, profile_id: str) -> dict[str, Any]:
         args = {"listing_id": listing_id, "profile_id": profile_id}
@@ -193,25 +193,20 @@ class TalentService:
             ],
         }
 
-    def _search_opportunities(self, actor, profile_id, country, min_score, limit):
+    def _search_opportunities(self, actor, profile_id, include_global, min_score, limit):
         require_scope(actor, "read:public")
         require_role(actor, OPPORTUNITY_ROLES)
         _check_limit(limit, self._cfg)
         threshold = self._cfg.default_min_score if min_score is None else min_score
         _check_range(threshold, 0, 100, "min_score")
-        if country is not None:
-            country = country.strip().upper()
-            if country not in SUPPORTED_COUNTRIES:
-                raise ValidationFailed("country must be one of NG, ZA, KE, GH")
 
         cand = self._owned_active_candidate(actor, profile_id)
-        target = country or cand.country
         as_of = self._clock()
         taxonomy = self._taxonomy()
 
         scored_listings: list[tuple[float, Listing, Any]] = []
         for listing in self._store.listings():
-            if not passes_listing_filters(listing, target):
+            if not passes_listing_filters(listing, cand.country, include_global=include_global):
                 continue
             req = listing_requirement(listing)
             result = score_against(req, cand, req_vector=listing.embedding, as_of=as_of, cfg=self._cfg)
@@ -230,7 +225,15 @@ class TalentService:
                     "listing_id": listing.listing_id,
                     "title": listing.title,
                     "type": listing.type,
-                    "country": listing.country,
+                    "employer": listing.employer_name,
+                    "location": listing.location_text or None,
+                    "eligible_countries": list(listing.eligible_countries),
+                    "scope": listing.scope,
+                    "in_your_country": cand.country in listing.eligible_countries,
+                    "source": listing.source_key,
+                    "source_url": listing.source_url,
+                    "demo": listing.demo,
+                    "expires_at": listing.expires_at.isoformat() if listing.expires_at else None,
                     "score": result.score,
                     "band": result.band,
                     "confidence": {"value": round(result.confidence, 2), "label": result.confidence_label},
