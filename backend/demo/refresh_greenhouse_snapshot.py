@@ -8,21 +8,24 @@ The contact address is sent in the User-Agent so employers can reach us about th
 
 import collections
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.errors import YppError
 from core.ingestion.greenhouse import GreenhouseConnector
+from core.settings import Settings, load_environment
 
 BOARDS = ["moniepoint", "alxafrica", "oafkenya", "oneacrefundglobal", "jumia", "impact"]
 OUT = Path(__file__).with_name("greenhouse_snapshot.json")
 
 
 def main() -> int:
-    contact = os.environ.get("YPP_INGEST_CONTACT", "").strip()
-    if not contact:
-        print("Set YPP_INGEST_CONTACT to a real contact address before refreshing.", file=sys.stderr)
+    try:
+        env = load_environment(Path(__file__).resolve().parents[1] / ".env")
+        contact = Settings.from_env(env).require_ingest_contact()
+    except YppError as exc:
+        print(f"{exc}. Set it in backend/.env, see backend/.env.example.", file=sys.stderr)
         return 2
     connector = GreenhouseConnector(user_agent=f"YPP-Ingest/0.1 ({contact})", min_interval_seconds=5.0)
     fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")

@@ -1,49 +1,48 @@
-import { SCOPE_LABELS, WORK_MODE_LABELS, type Opportunity } from '../lib/opportunities';
-
-const dateFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : dateFormat.format(parsed);
-}
+import { Link } from 'react-router';
+import { ArrowRightIcon } from './Icon';
+import { CountryTags, ScopeTag, WorkModeTag } from './EligibilityTag';
+import { formatDate } from '../lib/format';
+import { listingId, type Opportunity } from '../lib/opportunities';
 
 export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
   const location = opportunity.location_text.trim();
-  const countries = opportunity.eligible_countries.length > 0 ? opportunity.eligible_countries.join(', ') : null;
+  const id = listingId(opportunity);
 
   return (
-    <article className="card">
-      <header className="card__header">
-        <p className="card__employer">{opportunity.employer}</p>
-        <h2 className="card__title">{opportunity.title.trim()}</h2>
+    <article className="group relative flex flex-col gap-4 rounded-2xl border border-ink-900/8 bg-cream-100/50 p-6 transition-all hover:border-ink-900/20 hover:bg-white">
+      <header className="space-y-2">
+        <p className="text-xs font-medium text-ink-600">{opportunity.employer}</p>
+        <h3 className="font-serif text-xl leading-snug font-medium text-ink-900 group-hover:text-accent-blue">
+          <Link to={`/opportunities/${encodeURIComponent(id)}`} className="after:absolute after:inset-0">
+            {opportunity.title.trim()}
+          </Link>
+        </h3>
       </header>
 
-      {opportunity.description.trim() && <p className="card__excerpt">{opportunity.description.trim()}</p>}
+      <div className="flex flex-wrap gap-2">
+        <WorkModeTag mode={opportunity.work_mode} />
+        <ScopeTag scope={opportunity.scope} />
+      </div>
 
-      <ul className="card__tags" aria-label="Details">
-        <li className="tag">{WORK_MODE_LABELS[opportunity.work_mode]}</li>
-        <li className={`tag tag--${opportunity.scope}`}>{SCOPE_LABELS[opportunity.scope]}</li>
-        {countries && <li className="tag tag--muted">{countries}</li>}
-      </ul>
-
-      <dl className="card__meta">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono text-xs text-ink-600">
         {location && (
           <>
-            <dt>Location</dt>
+            <dt className="text-ink-500">Where</dt>
             <dd>{location}</dd>
           </>
         )}
-        <dt>Updated</dt>
+        <dt className="text-ink-500">Updated</dt>
         <dd>
           <time dateTime={opportunity.updated_at}>{formatDate(opportunity.updated_at)}</time>
         </dd>
       </dl>
 
-      <div className="card__footer">
-        <a className="button" href={opportunity.source_url} target="_blank" rel="noopener noreferrer">
-          View original posting
-        </a>
-        <span className="card__source">via {opportunity.employer}</span>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-2">
+        <CountryTags countries={opportunity.eligible_countries} />
+        <span className="flex items-center gap-1 text-xs font-semibold text-ink-900 group-hover:text-accent-blue">
+          View details
+          <ArrowRightIcon className="transition-transform group-hover:translate-x-0.5" />
+        </span>
       </div>
     </article>
   );

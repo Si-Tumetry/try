@@ -20,9 +20,11 @@ Built so far:
 - MCP server with the six read tools and bearer-token authentication.
 - Opportunity ingestion: a Greenhouse Job Board connector, a location parser that gives each listing its eligible countries and scope, and a demo loader that refuses to run in production.
 - Youth opportunity search defaults to listings open in the youth's country. A global view is available and labelled.
-- 168 tests.
+- 208 tests, all passing without network access, a database or AWS credentials.
 
-Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters, OAuth, skill extraction for listings, pagination beyond 25 results, and the scheduled connector. The engine runs against an in-memory store until the Postgres store exists.
+Also built: cursor pagination on search and list endpoints, a settings module that reads and validates environment variables (`backend/.env.example` lists them), and deterministic skill matching for listings.
+
+Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters (including the LLM step of listing skill extraction), OAuth, the full skills taxonomy (about 300 skills; the demo uses a small test set), and the scheduled connector. The engine runs against an in-memory store until the Postgres store exists.
 
 Refreshing the demo snapshot from the live Greenhouse boards:
 
@@ -37,7 +39,8 @@ YPP_INGEST_CONTACT="you@yourdomain.org" python -m demo.refresh_greenhouse_snapsh
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, components, deployment on Render, request flows, decisions |
 | [TECHNICAL.md](TECHNICAL.md) | Implementation detail: services, ingestion and RAG pipelines, scoring, workers |
 | [DATABASE.md](DATABASE.md) | Schema, indexes, constraints, retention, migrations |
-| [FRONTEND.md](FRONTEND.md) | React web app: structure, data, filters, testing, deployment |
+| [docs/FRONTEND.md](docs/FRONTEND.md) | React web app: structure, data, filters, testing, deployment |
+| [DESIGN.md](DESIGN.md) | NextStep page designs: visual system, sitemap, and page specifications |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Symptom-first diagnostics and fixes |
 
 The source specification is `Youth_Yellow_Pages_Technical_Design.pdf` (version 1 draft). Where these documents go beyond it, the difference is marked as an addition.
@@ -128,7 +131,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Configure
-cp ../infra/env.example .env   # then edit values
+cp .env.example .env   # run from backend/, then edit values
 
 # 4. Migrate and run
 python manage.py migrate

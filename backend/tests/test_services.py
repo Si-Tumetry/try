@@ -73,10 +73,10 @@ def test_min_score_out_of_range_is_rejected(svc):
         svc.search_talent(EMPLOYER, "python", min_score=101)
 
 
-def test_truncation_flag_when_more_results_than_limit(svc):
+def test_next_cursor_is_present_only_when_more_results_exist(svc):
     out = svc.search_talent(EMPLOYER, "python developer", min_score=0, limit=1)
     assert len(out["results"]) == 1
-    assert out["truncated"] is (out["total_matching"] > 1)
+    assert (out["next_cursor"] is not None) is (out["total_matching"] > 1)
 
 
 def test_search_survives_embedding_outage(audit):

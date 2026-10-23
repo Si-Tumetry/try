@@ -1,10 +1,12 @@
 import json
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from core.domain import Listing
+from core.domain import Listing, Skill
 from core.errors import YppError
+from core.ingestion.listing_skills import skills_for_listing
 from core.ports import Embedder
 
 DEMO_ENVIRONMENTS = frozenset({"dev", "demo"})
@@ -34,6 +36,7 @@ def listing_from_record(
     *,
     approve_for_demo: bool,
     embedder: Embedder | None = None,
+    taxonomy: Iterable[Skill] = (),
 ) -> Listing:
     countries = tuple(rec.get("eligible_countries") or ())
     needs_review = rec.get("status") == "needs_review" or bool(rec.get("unmapped_locations"))
@@ -45,6 +48,7 @@ def listing_from_record(
     embedding = None
     if embedder is not None:
         embedding = tuple(embedder.embed(f"{rec['title']}\n{description}"))
+    skills = skills_for_listing(rec["title"], description, taxonomy)
     return Listing(
         listing_id=f"{rec['source_key']}:{rec['external_id']}",
         owner_user_id=f"ingest:{rec['source_key']}",
@@ -65,6 +69,7 @@ def listing_from_record(
         expires_at=_date_or_none(rec.get("expires_at")),
         demo=True,
         embedding=embedding,
+        skills=skills,
     )
 
 
@@ -77,13 +82,17 @@ def load_snapshot(
     *,
     app_env: str,
     embedder: Embedder | None = None,
+    taxonomy: Iterable[Skill] = (),
 ) -> list[Listing]:
     check_environment(app_env)
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     approve = app_env in DEMO_ENVIRONMENTS
+    taxonomy = list(taxonomy)
     listings = []
     for rec in data["listings"]:
         if rec.get("status") == "rejected":
             continue
-        listings.append(listing_from_record(rec, approve_for_demo=approve, embedder=embedder))
+        listings.append(
+            listing_from_record(rec, approve_for_demo=approve, embedder=embedder, taxonomy=taxonomy)
+        )
     return listings

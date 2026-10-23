@@ -21,9 +21,10 @@ def build_mcp(service: TalentService) -> FastMCP:
         skills: list[str] | None = None,
         min_score: int | None = None,
         limit: int = 10,
+        cursor: str | None = None,
         rerank: bool = True,
     ) -> dict:
-        """Rank consented candidates for a requirement. Returns score, band, breakdown and gaps."""
+        """Rank consented candidates for a requirement. Returns score, band, breakdown and gaps. Pass next_cursor to page."""
         return service.search_talent(
             actor_from_context(ctx),
             query,
@@ -31,6 +32,7 @@ def build_mcp(service: TalentService) -> FastMCP:
             country=country,
             min_score=min_score,
             limit=limit,
+            cursor=cursor,
             rerank=rerank,
         )
 
@@ -59,14 +61,16 @@ def build_mcp(service: TalentService) -> FastMCP:
         include_global: bool = False,
         min_score: int | None = None,
         limit: int = 10,
+        cursor: str | None = None,
     ) -> dict:
-        """Match one of your own profiles to listings open in your country. Set include_global to also see listings from other countries, labelled."""
+        """Match one of your own profiles to listings open in your country. Set include_global to also see listings from other countries, labelled. Pass next_cursor to page."""
         return service.search_opportunities(
             actor_from_context(ctx),
             profile_id,
             include_global=include_global,
             min_score=min_score,
             limit=limit,
+            cursor=cursor,
         )
 
     @mcp.tool()
@@ -80,8 +84,11 @@ def build_mcp(service: TalentService) -> FastMCP:
         query: str | None = None,
         category: str | None = None,
         limit: int = 50,
+        cursor: str | None = None,
     ) -> dict:
-        """Look up the canonical skills taxonomy."""
-        return service.list_skills(actor_from_context(ctx), query=query, category=category, limit=limit)
+        """Look up the canonical skills taxonomy. Pass next_cursor to page."""
+        return service.list_skills(
+            actor_from_context(ctx), query=query, category=category, limit=limit, cursor=cursor
+        )
 
     return mcp

@@ -55,7 +55,7 @@ flowchart TD
 | 401 or 403 on MCP calls | [MCP authorisation failures](#mcp-authorisation-failures) |
 | 429 responses | [Rate limited](#rate-limited) |
 | 503 responses | [Dependency unavailable](#dependency-unavailable) |
-| MCP tool result truncated | [Truncated results](#truncated-results) |
+| Result list stops after one page, or cursor rejected | [Results stop after the first page](#results-stop-after-the-first-page), [Invalid cursor](#invalid-cursor) |
 | Explanations mention things not in the profile | [Grounding violations](#grounding-violations) |
 | Contact details showing before acceptance | [Contact leak](#contact-details-visible-before-acceptance) |
 | Deleted profile still visible | [Deletion not effective](#deleted-profile-still-visible) |
@@ -808,13 +808,23 @@ Filter noisy health-check logs at the web layer rather than suppressing applicat
 
 ## Results and output
 
-### Truncated results
+### Results stop after the first page
 
-**Symptom:** An MCP tool returns `truncated: true`.
+**Symptom:** A result list ends and the client has no way to get more, or `next_cursor` is missing.
 
-**Expected:** Results are capped [TECHNICAL §7]. Use `limit` and cursor pagination.
+**Expected:** Each page holds at most 25 results. `next_cursor` is present until the last page and null after it [TECHNICAL §8].
 
-**Action:** Ask the agent to request the next page. Do not raise caps globally to fix a single query.
+**Check:** Pass the `cursor` from the previous response unchanged. A cursor from a different query or a different `include_global` setting returns the wrong page.
+
+**Action:** Ask the agent or client to follow `next_cursor`. Do not raise the page cap globally to fix a single query.
+
+### Invalid cursor
+
+**Symptom:** A tool or endpoint returns `validation_error` with `invalid cursor`.
+
+**Cause:** The cursor was edited, truncated, or copied from another service.
+
+**Fix:** Start again from the first page with no cursor.
 
 ### Matches table growing quickly
 

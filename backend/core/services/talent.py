@@ -10,6 +10,7 @@ from core.engine.filters import passes_candidate_filters, passes_listing_filters
 from core.engine.parser import listing_requirement, parse_requirement
 from core.engine.rag import Scored, embed_query, run_talent_search, score_against
 from core.errors import NotFound, ValidationFailed, YppError
+from core.pagination import decode_cursor, page_of
 from core.ports import LLM, AuditSink, Embedder, Store
 from core.services.audit import record, result_for
 from core.services.permissions import (
@@ -52,11 +53,12 @@ class TalentService:
         country: str | None = None,
         min_score: int | None = None,
         limit: int = 10,
+        cursor: str | None = None,
         rerank: bool = True,
     ) -> dict[str, Any]:
         args = {"query": query, "skills": skills, "country": country, "min_score": min_score, "limit": limit, "rerank": rerank}
         return self._audited(actor, "search_talent", args, lambda: self._search_talent(
-            actor, query, skills, country, min_score, limit, rerank))
+            actor, query, skills, country, min_score, limit, cursor, rerank))
 
     def score_candidate(
         self,
@@ -83,10 +85,11 @@ class TalentService:
         include_global: bool = False,
         min_score: int | None = None,
         limit: int = 10,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         args = {"profile_id": profile_id, "include_global": include_global, "min_score": min_score, "limit": limit}
         return self._audited(actor, "search_opportunities", args, lambda: self._search_opportunities(
-            actor, profile_id, include_global, min_score, limit))
+            actor, profile_id, include_global, min_score, limit, cursor))
 
     def get_skill_gap(self, actor: Actor, listing_id: str, profile_id: str) -> dict[str, Any]:
         args = {"listing_id": listing_id, "profile_id": profile_id}
@@ -100,15 +103,17 @@ class TalentService:
         query: str | None = None,
         category: str | None = None,
         limit: int = 50,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         args = {"query": query, "category": category, "limit": limit}
         return self._audited(actor, "list_skills", args, lambda: self._list_skills(
-            actor, query, category, limit))
+            actor, query, category, limit, cursor))
 
-    def _search_talent(self, actor, query, skills, country, min_score, limit, rerank):
+    def _search_talent(self, actor, query, skills, country, min_score, limit, cursor, rerank):
         require_scope(actor, "read:candidates")
         require_role(actor, CANDIDATE_VIEWER_ROLES)
         _check_limit(limit, self._cfg)
+        decode_cursor(cursor)
         threshold = self._cfg.default_min_score if min_score is None else min_score
         _check_range(threshold, 0, 100, "min_score")
 
@@ -126,13 +131,13 @@ class TalentService:
             min_score=threshold,
         )
         taxonomy = self._taxonomy()
-        page = outcome.ranked[:limit]
+        page, next_cursor = page_of(outcome.ranked, cursor, limit)
         return {
             "results": [
                 candidate_view(s, req, taxonomy, visible=s.candidate.employer_fields) for s in page
             ],
             "total_matching": len(outcome.ranked),
-            "truncated": len(outcome.ranked) > limit,
+            "next_cursor": next_cursor,
             "requirement": _requirement_summary(req, taxonomy),
             "unknown_skills": list(unknown),
             "retrieval_channels": list(outcome.channels),
@@ -193,10 +198,11 @@ class TalentService:
             ],
         }
 
-    def _search_opportunities(self, actor, profile_id, include_global, min_score, limit):
+    def _search_opportunities(self, actor, profile_id, include_global, min_score, limit, cursor):
         require_scope(actor, "read:public")
         require_role(actor, OPPORTUNITY_ROLES)
         _check_limit(limit, self._cfg)
+        decode_cursor(cursor)
         threshold = self._cfg.default_min_score if min_score is None else min_score
         _check_range(threshold, 0, 100, "min_score")
 
@@ -214,7 +220,7 @@ class TalentService:
                 scored_listings.append((result.score, listing, result))
         scored_listings.sort(key=lambda t: (-t[0], t[1].listing_id))
 
-        page = scored_listings[:limit]
+        page, next_cursor = page_of(scored_listings, cursor, limit)
         results = []
         for _, listing, result in page:
             req = listing_requirement(listing)
@@ -245,7 +251,7 @@ class TalentService:
         return {
             "results": results,
             "total_matching": len(scored_listings),
-            "truncated": len(scored_listings) > limit,
+            "next_cursor": next_cursor,
         }
 
     def _get_skill_gap(self, actor, listing_id, profile_id):
@@ -269,10 +275,11 @@ class TalentService:
             "projects": projects_for(missing, taxonomy),
         }
 
-    def _list_skills(self, actor, query, category, limit):
+    def _list_skills(self, actor, query, category, limit, cursor):
         require_scope(actor, "read:public")
         if not 1 <= limit <= 100:
             raise ValidationFailed("limit must be from 1 to 100")
+        decode_cursor(cursor)
         skills = self._store.skills()
         if category:
             skills = [s for s in skills if s.category.lower() == category.strip().lower()]
@@ -283,7 +290,7 @@ class TalentService:
                 if q in s.name.lower() or any(q in a.lower() for a in s.aliases)
             ]
         skills.sort(key=lambda s: s.name.lower())
-        page = skills[:limit]
+        page, next_cursor = page_of(skills, cursor, limit)
         return {
             "skills": [
                 {
@@ -296,7 +303,7 @@ class TalentService:
                 for s in page
             ],
             "total_matching": len(skills),
-            "truncated": len(skills) > limit,
+            "next_cursor": next_cursor,
         }
 
     def _searchable_candidate(self, profile_id: str) -> Candidate:

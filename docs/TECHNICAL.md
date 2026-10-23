@@ -536,7 +536,7 @@ Each tool is a thin wrapper in `mcp_server/app.py` that calls one `TalentService
 
 `search_opportunities` takes a `profile_id` only. Matching from free text (`query`) is **not yet built**, because free text has no candidate record to score against. By default it returns listings open in the youth's own country (§14.19). `include_global` adds the others, each labelled with its scope and `in_your_country`. The earlier `country` parameter was removed, because a youth can't choose a country they don't live in.
 
-Results are capped at 25 with a `truncated` flag. Paging through the rest is not built yet. It belongs with the cursor pagination in §8.
+Results are paged. Pass the `cursor` from `next_cursor` to get the next page. `next_cursor` is null on the last page. Cursors are opaque and validated (§8).
 
 **Not built yet:**
 
@@ -551,7 +551,7 @@ Safety rules for all tools:
 
 - Profile text in results is placed under `untrusted_text` and the response carries `"untrusted": true`.
 - Tool results never include contact details. The contact release flow is not built yet.
-- Results are capped; exceeding a cap returns the first N with `truncated: true`.
+- Results are paged. `limit` is capped at 25 for candidate and opportunity search and at 100 for skills. A `next_cursor` is returned until the last page.
 
 ---
 
@@ -559,7 +559,7 @@ Safety rules for all tools:
 
 - Base path `/v1`. Versioned routes only.
 - JSON in, JSON out. Dates are ISO 8601 in UTC.
-- Pagination: cursor-based, `?cursor=...&limit=...`, default 20, max 50 **(addition)**.
+- Pagination: cursor-based, `?cursor=...&limit=...`. Default 10, max 25 for search, 100 for the skills list **(addition)**. Cursors are opaque, and a malformed cursor returns `validation_error`. The MCP tools take the same `cursor` and `limit` parameters.
 - Errors use a single shape:
 
 ```json
@@ -774,7 +774,7 @@ The KCA careers page does not follow the schema.org `JobPosting` format, so the 
 | Row identifier or details URL | `external_id` | CSV: the partner's own row id if provided, otherwise the details URL. Feed: the feed's identifier. Hashed with `source_key` for the unique index |
 | Contact name, email, phone | Not stored | Dropped at intake. Never reaches `listing_imports.payload` |
 
-The required skills are not in any partner field. They are extracted from the description with the same guardrails as profile extraction (TECHNICAL §4.2), then matched to the taxonomy with §4.3. Each matched skill becomes a `listing_skills` row. Skills named in the title are `must_have` with level 3. Other matched skills are nice-to-have with level 2. These defaults are shown to the admin in review and can be changed there.
+The required skills are not in any partner field. The deterministic step is built: `core/ingestion/listing_skills.py` matches taxonomy names and aliases against the title and description. Whole-word matching only. The LLM step, which extracts phrasing the taxonomy does not list, is not built. When it is, it will use the guardrails of profile extraction (§4.2) and the matching of §4.3. Each matched skill becomes a `listing_skills` row. Skills named in the title are `must_have` with level 3. Other matched skills are nice-to-have with level 2. These defaults are shown to the admin in review and can be changed there.
 
 ### 14.5 Dedupe, change detection and closing
 
