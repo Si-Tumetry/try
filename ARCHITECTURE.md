@@ -22,20 +22,34 @@ Source references use the form `[PDF §n]` to point to `Youth_Yellow_Pages_Techn
 
 ## 2. Context
 
-```
-                 ┌──────────────────────────┐
-  Youth (web,    │                          │   Employers (web, API key)
-  Flutter app) ──┤                          ├── Admin (reviewers)
-                 │   Youth Yellow Pages     │
-  AI agents ─────┤   (Django + MCP + engine)├── Email / SMS (phase 4)
-  (OAuth 2.1)    │                          │
-                 └────────────┬─────────────┘
-                              │
-          ┌───────────────────┼────────────────────┐
-          │                   │                    │
-   AWS Bedrock          Object storage        External checks
-   (embed, LLM)         (CVs, certificates)   (repo OAuth, certificate
-                                               lookup, business registry)
+```mermaid
+flowchart LR
+    subgraph Clients
+        Y["Youth<br/>web and Flutter app"]
+        E["Employers<br/>web, API key"]
+        A["Admin reviewers"]
+        AI["AI agents<br/>OAuth 2.1 over MCP"]
+    end
+
+    subgraph Core["Youth Yellow Pages"]
+        APP["Django, MCP and engine"]
+    end
+
+    subgraph External["External services"]
+        BR["AWS Bedrock<br/>embeddings and LLM"]
+        OS["Object storage<br/>CVs and certificates"]
+        CHK["External checks<br/>repo OAuth, certificate lookup,<br/>business registry"]
+        NOT["Email and SMS<br/>phase 4"]
+    end
+
+    Y --> APP
+    E --> APP
+    A --> APP
+    AI --> APP
+    APP --> BR
+    APP --> OS
+    APP --> CHK
+    APP -.-> NOT
 ```
 
 Actors:
@@ -63,6 +77,31 @@ All compute runs on Render in one region chosen to be close to the majority of u
 | `ypp-kv` | Render Key Value (Redis-compatible) | Celery broker, result backend, rate-limit counters, short caches | Vertical |
 | Object storage | External S3-compatible bucket | CVs, certificates, uploaded files | Managed by provider |
 
+```mermaid
+flowchart TB
+    subgraph Render["Render, one region"]
+        WEB["ypp-web<br/>Gunicorn and Uvicorn<br/>REST under /v1, admin, /mcp"]
+        WRK["ypp-worker<br/>Celery workers<br/>ingest, embed, verify"]
+        BEAT["ypp-beat<br/>Celery Beat<br/>exactly one instance"]
+        DB[("ypp-db<br/>Postgres 16<br/>pgvector, pg_trgm")]
+        KV[("ypp-kv<br/>Key Value, Redis-compatible<br/>broker, rate limits")]
+    end
+
+    OBJ[("Object storage<br/>S3-compatible, external")]
+    BR["AWS Bedrock"]
+
+    WEB --> DB
+    WEB --> KV
+    WEB --> OBJ
+    WEB --> BR
+    WRK --> DB
+    WRK --> KV
+    WRK --> OBJ
+    WRK --> BR
+    BEAT --> KV
+    KV -. "tasks" .-> WRK
+```
+
 **Why web and MCP share a service in phase 1.** The MCP server calls the same services as REST, so a separate deployment would add a second process to operate with no security gain. The MCP app is mounted at `/mcp` inside the ASGI application. It can be split into its own Render service later without code changes to the services.
 
 **Why beat is separate.** Celery Beat must run as a single instance or scheduled jobs (nightly reindex) would run more than once.
@@ -78,6 +117,38 @@ All compute runs on Render in one region chosen to be close to the majority of u
 ---
 
 ## 4. Component design
+
+```mermaid
+flowchart TB
+    subgraph Doors["Doors (thin adapters)"]
+        REST["REST /v1<br/>Django REST Framework"]
+        MCP["MCP /mcp<br/>FastMCP tools"]
+        ADM["Admin<br/>Django admin"]
+    end
+
+    SVC["Service layer<br/>core/services<br/>permissions, consent, audit, business logic"]
+
+    subgraph Engine["core/engine"]
+        ENG["Parser, hybrid retriever,<br/>scorer, reranker, explainer"]
+    end
+
+    subgraph Data["Data"]
+        PG[("Postgres<br/>profiles, skills, listings, matches")]
+        AUD[("audit_log<br/>append only")]
+    end
+
+    WK["Workers<br/>core/ingestion and workers"]
+
+    REST --> SVC
+    MCP --> SVC
+    ADM --> SVC
+    SVC --> ENG
+    SVC --> PG
+    SVC --> AUD
+    SVC -- "enqueue" --> WK
+    WK -- "calls service" --> SVC
+    ENG --> PG
+```
 
 ### 4.1 Service layer (`core/services`)
 
@@ -164,6 +235,8 @@ Full request and response contracts are not part of this document. This section 
 
 Transport: streamable HTTP. Authentication: OAuth 2.1 bearer token with scopes.
 
+**Status:** the six read tools are built and tested (`backend/mcp_server/`). `create_listing` and `record_outcome` need the Postgres store and are not built. Bearer tokens are resolved by a development token store until OAuth is built. See [TECHNICAL.md §7](TECHNICAL.md#7-mcp-tools).
+
 | Tool | Access | Calls |
 |---|---|---|
 | `search_talent` | read | `search`, `scoring` |
@@ -195,26 +268,53 @@ Phase 1 also issues API keys to verified employers. Keys map to the same scopes 
 
 ### 6.1 Profile ingestion
 
-```
-Client ──POST /v1/profiles──▶ web ──▶ profiles.save()
-                                        │ writes profile row (status = pending_extraction)
-                                        │ audit_log
-                                        ▼
-                                  enqueue extract_skills
-                                        │
-                  worker ◀──────────────┘
-                    │ LLM extraction against fixed taxonomy → JSON
-                    │ normalise: alias match, then embedding ≥ 0.80
-                    │   ├── matched   → profile_skills (source = self)
-                    │   └── unmatched → skill_candidates (review queue)
-                    ▼
-                  enqueue embed_profile
-                    │ build profile document, embed, store vector
-                    ▼
-                  status = active
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant API as Web, POST /v1/profiles
+    participant PS as Profile service
+    participant DB as Postgres
+    participant Q as Redis queue
+    participant W as Worker
+    participant LLM as Bedrock LLM
+    participant EMB as Bedrock embeddings
+
+    C->>API: POST profile
+    API->>PS: save profile
+    PS->>DB: insert profile, status pending_extraction
+    PS->>DB: write audit_log
+    PS->>Q: enqueue extract_skills
+    API-->>C: 202 Accepted with profile id
+
+    Q->>W: extract_skills
+    W->>LLM: extract JSON against fixed taxonomy
+    LLM-->>W: skills JSON
+    W->>W: normalise by alias, then embedding at 0.80 or above
+    W->>DB: matched skills to profile_skills
+    W->>DB: unmatched skills to skill_candidates
+    W->>Q: enqueue embed_profile
+
+    Q->>W: embed_profile
+    W->>EMB: embed profile document
+    EMB-->>W: vector of 1024 floats
+    W->>DB: store embedding, status active
 ```
 
-The client receives `202 Accepted` with the profile id. Status changes to `active` once embedding completes. Search ignores profiles that are not `active`.
+The client receives `202 Accepted` with the profile id. Search ignores profiles that are not `active`.
+
+Profile status lifecycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending_extraction: profile saved
+    pending_extraction --> pending_embedding: skills extracted
+    pending_extraction --> extraction_failed: retries exhausted
+    extraction_failed --> pending_extraction: admin requeues
+    pending_embedding --> active: embedding stored
+    active --> suspended: admin action
+    suspended --> active: admin reinstates
+```
 
 ### 6.2 Evidence verification
 
@@ -227,44 +327,129 @@ Evidence is accepted in `pending` state. The worker runs the check that matches 
 | Assessment | Result stored by the assessment provider; verified on receipt |
 | Employer review | Employer confirmation through a signed link |
 
+```mermaid
+flowchart TD
+    START["Evidence attached<br/>status pending"] --> TYPE{"Evidence type"}
+
+    TYPE -- "project link" --> GH{"Hosted on GitHub<br/>and OAuth linked?"}
+    GH -- yes --> PV["Verified by oauth_github<br/>weight 0.8"]
+    GH -- no --> PR["Link check passes<br/>admin review before verified"]
+
+    TYPE -- "certificate" --> CERT{"Issuer has lookup API?"}
+    CERT -- yes --> CV["Verified by issuer_api<br/>weight 0.5"]
+    CERT -- no --> CU["Stays unverified<br/>weight 0.2"]
+
+    TYPE -- "assessment" --> AS["Signed webhook from provider"]
+    AS --> AV["Verified by assessment_provider<br/>weight 1.0"]
+
+    TYPE -- "employer review" --> LINK["Signed link sent to employer"]
+    LINK --> EMP{"Employer confirms?"}
+    EMP -- yes --> EV["Verified by employer_confirmation<br/>weight 0.9"]
+    EMP -- no --> EN["Stays unverified<br/>weight 0.2"]
+```
+
 A verified item raises the evidence weight of its skill. Unverified items are visible to the candidate but do not count toward `S_evid` beyond the self-declared weight.
 
 ### 6.3 Search (RAG)
 
+```mermaid
+flowchart TD
+    REQ["GET /v1/search/talent<br/>search.talent"] --> PARSE["1. Parse requirement<br/>must, nice, location, availability, level"]
+    PARSE --> FILT["2. SQL hard filters<br/>country, active, searchable consent,<br/>availability, not deleted or suspended"]
+
+    FILT --> EMB{"Requirement embedded?"}
+    FILT --> KW["3b. Top 200 by keyword<br/>tsvector and trigram"]
+    EMB -- yes --> VEC["3a. Top 200 by vector<br/>HNSW cosine"]
+    EMB -- no --> NOVEC["No vector channel<br/>embedding_status unavailable"]
+
+    VEC --> RRF["3. Merge with reciprocal rank fusion"]
+    KW --> RRF
+    NOVEC --> RRF
+
+    RRF --> SCORE["4. Score top 100<br/>scoring model v1"]
+    SCORE --> RQ{"Rerank requested<br/>and LLM available?"}
+    RQ -- yes --> RR["5. Rerank top 30<br/>schema-validated JSON"]
+    RQ -- no --> OUT["6. Explain and return top k<br/>breakdown, gaps, evidence, next project"]
+    RR --> OUT
 ```
-GET /v1/search/talent ──▶ search.talent()
-   1. parse requirement → must, nice, location, availability, level
-   2. SQL hard filters: country, status=active, availability, consent
-   3. candidate generation (in parallel):
-        ├── top 200 by vector similarity (HNSW, cosine)
-        └── top 200 by keyword (tsvector and trigram)
-      merge with reciprocal rank fusion
-   4. score top 100 with the scoring model
-   5. rerank top 30 with LLM (structured JSON output, schema-validated)
-   6. explain and return top k with breakdown, gaps, evidence links, next project
-```
+
+Steps 3a and 3b run in parallel where the embedding exists. Rerank is skipped when the client sets `rerank=false`.
 
 Latency budget: under 2.5 seconds p95 for `k ≤ 10`. Steps 3a and 3b run in parallel. The LLM rerank is the most expensive step and can be skipped with a `rerank=false` parameter for low-bandwidth clients or when the LLM is degraded (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
 
 ### 6.4 Contact release
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant EMP as Employer
+    participant API as REST /v1
+    participant CS as Contact service
+    participant DB as Postgres
+    participant CAND as Candidate
+
+    EMP->>API: POST /v1/contact-requests
+    API->>CS: request contact
+    CS->>DB: insert request, status requested
+    CS->>DB: write audit_log
+    CS-->>CAND: notify by email or SMS
+    Note over DB: contact details not released
+
+    CAND->>API: accept the request
+    API->>CS: accept
+    CS->>DB: status accepted, release contact fields
+    CS->>DB: write audit_log
+    CS-->>EMP: contact details now visible
 ```
-Employer ──POST /v1/contact-requests──▶ contact.request()
-   records request, notifies candidate
-Candidate ──POST /v1/contact-requests/{id}/accept──▶ contact.accept()
-   sets status = accepted, releases contact fields to the employer
-   audit_log both actions
+
+Contact request lifecycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> accepted: candidate accepts
+    requested --> declined: candidate declines
+    requested --> expired: 14 days pass
+    requested --> withdrawn: employer withdraws
+    accepted --> [*]
+    declined --> [*]
+    expired --> [*]
+    withdrawn --> [*]
 ```
 
 Contact details are never included in search results, MCP responses or logs before acceptance [PDF §7].
 
 ### 6.5 Outcome recording
 
-An employer or the candidate records `applied`, `interview`, `hired` or `retained_6m` on a match. `retained_6m` is set by a scheduled job 6 months after `hired` with a confirmation request to both parties. Outcomes feed evaluation, not live ranking, in phase 1.
+An employer or the candidate records `applied`, `interview`, `hired` or `retained_6m` on a match. `retained_6m` is set by a scheduled job 6 months after `hired` with a confirmation request to both parties. Outcomes feed evaluation, not live ranking, in phase 1. Outcomes move forward only.
+
+```mermaid
+stateDiagram-v2
+    [*] --> viewed
+    viewed --> applied
+    applied --> interview
+    interview --> hired
+    hired --> retained_6m: confirmed 6 months later
+    retained_6m --> [*]
+```
 
 ---
 
 ## 7. Security architecture
+
+```mermaid
+flowchart LR
+    R["Incoming request"] --> TLS["TLS enforced by Render"]
+    TLS --> AUTH{"Token valid?"}
+    AUTH -- no --> E401["401 unauthenticated"]
+    AUTH -- yes --> SCOPE{"Scope and role allowed?"}
+    SCOPE -- no --> E403["403 forbidden"]
+    SCOPE -- yes --> RL{"Within rate limit?"}
+    RL -- no --> E429["429 rate_limited"]
+    RL -- yes --> SVC["Service layer<br/>consent filter, then operation"]
+    SVC --> AUD["audit_log entry<br/>args hashed"]
+    SVC --> RES["Response"]
+```
 
 | Layer | Control |
 |---|---|
@@ -324,10 +509,23 @@ Scaling points, in order of expected pressure:
 
 ## 10. Failure modes
 
+```mermaid
+flowchart TD
+    S["Search request"] --> E{"Embedding service up?"}
+    E -- yes --> V["Vector and keyword channels"]
+    E -- no --> K["Keyword channel only<br/>embedding_status unavailable"]
+    V --> L{"LLM rerank up?"}
+    K --> L
+    L -- yes --> RR["Rerank top 30<br/>rerank_status applied"]
+    L -- no --> SK["Keep score order<br/>rerank_status failed"]
+    RR --> OUT["Return results with scores and breakdown"]
+    SK --> OUT
+```
+
 | Failure | Behaviour |
 |---|---|
-| Bedrock embedding unavailable | Profile saved as `pending_embedding`; retried with backoff. Search runs keyword-only and marks results `retrieval=keyword_only` |
-| Bedrock LLM unavailable | Extraction queued; rerank skipped and results marked `rerank=skipped`. Scores still returned |
+| Bedrock embedding unavailable | Search runs keyword-only and reports `embedding_status = unavailable`. Profiles that need an embedding stay `pending_embedding` and are retried with backoff |
+| Bedrock LLM unavailable | Extraction queued for retry. Rerank is skipped and reports `rerank_status = failed`. Scores still returned |
 | Redis unavailable | Rate limits fail closed on write endpoints, open on read endpoints with logging. Celery tasks wait and retry |
 | Postgres unavailable | Requests return `503`. No partial writes because each service call runs in a transaction |
 | Worker crash mid-task | Celery acknowledges late; tasks are idempotent, so a re-run produces the same state |

@@ -40,23 +40,38 @@ Migration `0001_extensions` runs these and fails fast with a clear message if `v
 
 ## 3. Entity overview
 
-```
-users 1─1 profiles 1─* profile_skills *─1 skills
-  │          │                              ▲
-  │          ├──1─* evidence                │ aliases, taxonomy
-  │          ├──1─* profile_consents        │
-  │          └──1─* matches *─1 listings ───┘ (listing_skills)
-  │                                           
-  ├──1─* listings (employer or business)
-  ├──1─* contact_requests
-  ├──1─* reports
-  ├──1─* api_keys
-  └──1─* oauth_tokens
+```mermaid
+erDiagram
+    users ||--o| profiles : "has one"
+    users ||--o{ listings : "owns, employer or business"
+    users ||--o{ contact_requests : "requests"
+    users ||--o{ reports : "files"
+    users ||--o{ api_keys : "holds"
+    users ||--o{ oauth_tokens : "holds"
+    users ||--o{ employer_verifications : "submits"
 
-skill_candidates        (review queue for unknown skills)
-audit_log               (append only)
-failed_jobs             (dead-letter record)
+    profiles ||--o{ profile_skills : "has"
+    profiles ||--o{ evidence : "has"
+    profiles ||--o{ profile_consents : "grants"
+    profiles ||--o{ matches : "appears in"
+    profiles ||--o{ contact_requests : "receives"
+
+    skills ||--o{ profile_skills : "used in"
+    skills ||--o{ listing_skills : "required in"
+    skills ||--o{ evidence : "supports"
+
+    listings ||--o{ listing_skills : "requires"
+    listings ||--o{ matches : "ranks"
+    listings ||--o{ contact_requests : "concerns"
+
+    oauth_clients ||--o{ oauth_tokens : "issues"
+    skill_candidates }o--o| skills : "nearest to"
+
+    audit_log
+    failed_jobs
 ```
+
+`audit_log` and `failed_jobs` have no foreign keys by design. They must keep their rows after the records they describe are purged.
 
 ---
 
@@ -97,7 +112,7 @@ Indexes:
 
 Notes:
 
-- Consent flags in [PDF §3] are represented by the terms and privacy version columns, plus field-level consent in `profile_consents` (section 4.7). Account-level consent is not a single boolean, so that the version accepted is auditable.
+- Consent flags in [PDF §3] are represented by the terms and privacy version columns, plus field-level consent in `profile_consents` (section 4.8). Account-level consent is not a single boolean, so that the version accepted is auditable.
 
 ### 4.2 `profiles`
 
@@ -325,7 +340,7 @@ Source: [PDF §9] "Field-level consent. Candidates choose what is visible." **(a
 |---|---|---|---|---|
 | `id` | `uuid` | no | | PK |
 | `profile_id` | `uuid` | no | | FK `profiles.id` ON DELETE CASCADE |
-| `field` | `text` | no | | `CHECK (field IN ('search','headline','bio','location','availability','languages','pay','evidence','contact','document'))` |
+| `field` | `text` | no | | `CHECK (field IN ('search','headline','bio','location','availability','languages','pay','skills','evidence','contact','document'))` **(`skills` added with the MCP build)** |
 | `audience` | `text` | no | | `CHECK (audience IN ('public','employers','opportunity_matching','none'))` |
 | `granted` | `boolean` | no | | Current state |
 | `granted_at` | `timestamptz` | yes | | |
@@ -339,6 +354,8 @@ Constraints:
 Notes:
 
 - `field = 'search'` with `audience = 'employers'` is the switch behind `profiles.searchable` **(addition)**. Setting it to false removes the profile from search immediately, in the same transaction.
+- **Skill visibility rule (as built):** a searchable profile's skills, levels and score breakdown are shown to employers, because skill matching is the purpose of search. The `skills` field is therefore consent for the **public** audience only. It controls whether `get_profile` returns skills.
+- Employer search results show `headline` and verified evidence links only when those fields are granted to the `employers` audience (`core/engine/explain.py`). The reranker prompt also includes `bio` under the same rule (`core/engine/rerank.py`). Location, languages and availability are used for fit scoring but are not echoed in employer results yet.
 - `field = 'contact'` is never released by a read. It is released only by an accepted contact request (section 4.9) [PDF §7].
 - Each change writes an `audit_log` entry.
 

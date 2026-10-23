@@ -120,6 +120,8 @@ API key format: `ypk_` + 40 random base62 characters. Only the hash and prefix a
 
 Refresh tokens are single-use. Reuse of a rotated refresh token revokes the whole token family **(addition)**.
 
+**Built in this release:** the MCP endpoint authenticates bearer tokens through `mcp_server/auth.py`. `StaticTokenStore` resolves SHA-256 digests of tokens to an `Actor` (user, role, scopes). It is for development and tests only. The OAuth 2.1 flow, the `oauth_tokens` table, refresh rotation and API keys are not built yet. The web and app login endpoints are not built yet.
+
 ---
 
 ## 4. Ingestion pipeline
@@ -230,34 +232,36 @@ class Requirement:
     requirement_hash: str      # SHA-256 of canonical JSON, used for caching
 ```
 
-Parsing order:
+v1 parser (implemented in `core/engine/parser.py`):
 
-1. Structured fields take precedence over free text.
-2. Free-text skills go through the same normalisation as profile skills (section 4.3).
-3. Levels not given default to 3 for must-have and 2 for nice-to-have **(default)**.
-4. Parse failure of free text falls back to keyword-only search and returns `parsed=false` in the response.
+1. Explicit `skills` parameter entries become **must-have** skills. Each entry is `name` or `name:level`, where the name is resolved through taxonomy names and aliases. Level defaults to 3 **(default)**.
+2. Skills named in the free-text query become **nice-to-have** skills at level 2 **(default)**. A skill already listed as must-have is not repeated.
+3. Unknown skill names are returned in `unknown_skills` and are not used in scoring.
+4. Country must be one of `NG`, `ZA`, `KE`, `GH`. Query length is capped at 500 characters and at most 20 skill entries are accepted.
+5. A request with neither a query nor a recognised skill is rejected with a validation error.
 
-Requirement parsing uses the LLM with the same delimiting and schema validation rules as section 4.2.
+The LLM parser described in the design for free text is planned as a later addition. The deterministic parser above is the fallback the design already allows when parsing fails.
 
 ### 5.2 Stage 2: hard filters
 
-Applied in SQL before any ranking. Candidates must satisfy all of:
+Applied before ranking. The SQL store will express these as a `WHERE` clause. The in-memory store applies the same rules in `core/engine/filters.py`. Candidates must satisfy all of:
 
 - `users.country = requirement.country` when provided
 - `profiles.status = 'active'`
-- `profiles.searchable = true`
-- The profile's `search` consent is granted
-- `profiles.availability` matches the requested value, when provided
-- The user account is not suspended and not deleted
+- `profiles.searchable = true`, which is set only when the `search` consent is granted
+- `users.suspended_at IS NULL` and `profiles.deleted_at IS NULL`
+- Availability is at least as soon as requested: `now` accepts `now` only; `within_30_days` accepts `now` or `within_30_days`; `flexible` accepts any value. A candidate with no availability is excluded when availability is requested **(changed from exact match, so that S_fit can give full credit to candidates who can start sooner)**
 
 ### 5.3 Stage 3: candidate generation
 
-Two queries run in parallel, each limited to the filtered set:
+Two channels run over the filtered set:
 
-| Channel | Method | Limit |
+| Channel | Production (Postgres) | v1 in-memory store |
 |---|---|---|
-| Vector | `ORDER BY embedding <=> :query_vector LIMIT 200`, HNSW cosine | 200 |
-| Keyword | `tsvector @@ plainto_tsquery` ranked with `ts_rank_cd`, plus trigram similarity on skill names | 200 |
+| Vector | `ORDER BY embedding <=> :query_vector LIMIT 200`, HNSW cosine. Runs only when the requirement text is embedded | Same ranking, computed in Python |
+| Keyword | `tsvector @@ plainto_tsquery` ranked with `ts_rank_cd`, plus trigram similarity on skill names. Limit 200 | Token overlap between the requirement text and the profile text, plus one point per matched requirement skill. A stand-in until the SQL store exists |
+
+When embedding fails, only the keyword channel runs and the response reports `embedding_status = unavailable` [ARCHITECTURE.md §10].
 
 Merge with **reciprocal rank fusion**:
 
@@ -274,16 +278,18 @@ Documents not returned by a channel contribute nothing for that channel. The fus
 - The top 30 by final score are sent to the LLM with the requirement and each candidate's **profile document and evidence summaries**. Each candidate is wrapped in its own delimited block with an id.
 - The LLM returns, per candidate, an ordering and a short rationale. Output must match a schema; each rationale must cite field names present in the input.
 - The reranker may **reorder** candidates within the top 30. It may not add or remove candidates, and may not change scores. The final order is the reranker's order for the top 30, followed by the rest in score order.
-- If the reranker fails validation twice, the score order is used and `rerank=skipped` is returned.
+- The reranker gets two attempts in total. If both fail validation, or the LLM is unavailable, the score order is kept and `rerank_status = failed` is returned. When rerank is not requested or no LLM is configured, `rerank_status = skipped`. When it succeeds, `rerank_status = applied`.
+- Ids the model omits are kept, in score order, after the ids it ranked. Ids the model invents, or repeats, make the attempt invalid.
+- Profile text, headline and evidence titles are sanitised before they enter the prompt. Control characters are removed, `&`, `<` and `>` are escaped, and each field is length-capped. `headline`, `bio` and verified evidence titles are included only when released to the `employers` audience. Skills are always included for searchable profiles, following the skill visibility rule in [DATABASE.md §4.8](DATABASE.md#48-profile_consents).
 
-Citation check: each rationale is checked for capitalised terms and skill names. Any skill name not present in the candidate's record is removed from the rationale and logged as `grounding_violation`.
+Grounding check: every skill name or alias in the taxonomy that appears in a rationale must either be a skill in the requirement or a skill in that candidate's record. If any other skill is named, the rationale is **dropped** (not edited), and a `grounding_violation` entry with the profile id and skill slugs is returned. The score is unaffected **(changed from removing the term: a partial rewrite can still read as a claim)**.
 
 ### 5.6 Stage 6: explain and return
 
 For each returned candidate:
 
-- `matched_skills`: skills that met the requirement, with level and evidence type.
-- `missing_skills`: must-have and nice-to-have skills not met, with the gap.
+- `matched_skills`: requirement skills the candidate has at any level above zero (`coverage > 0`).
+- `missing_skills`: requirement skills the candidate lacks or meets only partly (`coverage < 1`), with the required level, the candidate's level, and `must_have`. Partial matches appear here with their coverage value.
 - `evidence_links`: verified evidence URLs the candidate has made visible.
 - `next_project`: a suggested project from a fixed list per skill in the taxonomy (`skills.suggested_projects`), not generated text.
 - `breakdown`: each scoring component with its value and weight.
@@ -318,7 +324,7 @@ Edge cases **(default)**:
 - Candidate set of size 1, or `max_raw == min_raw`: `S_sem = 0.5`.
 - Embedding missing for a profile: `S_sem = 0`, and the candidate is flagged `embedding_missing`.
 
-The min-max scaling depends on the pool, so a candidate's score can change when the pool changes. The response states this, and `score_candidate` (single profile) uses `S_sem` computed against the requirement's pool sample **(addition)**. To keep single-profile scores stable, `score_candidate` uses the raw cosine mapped with `(raw + 1) / 2`, and this is marked `sem_scale=absolute` in the response **(default)**.
+The min-max scaling depends on the pool, so a candidate's score can change when the pool changes. Search responses report `sem_scale = minmax` (or `none` when no requirement embedding exists). Single-profile scoring (`score_candidate`, `get_skill_gap`, `search_opportunities`) must not depend on other candidates, so it maps the raw cosine with `S_sem = (raw + 1) / 2`, clamped to [0, 1], and reports `sem_scale = absolute` **(default)**.
 
 **S_skill: weighted coverage (0 to 1)**
 
@@ -380,7 +386,7 @@ Average of the applicable fit checks, each 0 or 1 or a partial value:
 | Check | Value |
 |---|---|
 | Location: same city or state = 1; same country = 0.5; otherwise 0 | Only if requirement has a location |
-| Availability: matches = 1; within 30 days when need is `now` = 0.5; otherwise 0 | Only if requirement has availability |
+| Availability: candidate is at least as available as requested = 1; otherwise 0. Candidates who fail this are removed by the hard filter, so in practice this is 1 for every ranked candidate **(changed: the earlier 0.5 partial credit could not be reached after the filter change in §5.2)** | Only if requirement has availability |
 | Language: all required languages spoken = 1; partial = proportion | Only if requirement has languages |
 | Pay range: profile expectation overlaps requirement = 1; otherwise 0 | Only if both have pay data |
 
@@ -416,13 +422,17 @@ Final score is rounded to one decimal place, half to even. Bands use the rounded
 
 Confidence describes how much of the score rests on evidence. **(default formula, addition)**
 
+Each must-have skill scores once, using the strongest evidence it has for that skill:
+
+- at least one verified evidence item for the skill: 1.0
+- only unverified evidence for the skill: 0.5
+- no evidence for the skill: 0
+
 ```
-confidence = (number of must-have skills with at least one verified evidence item
-             + 0.5 × number of must-have skills with unverified evidence)
-             / number of must-have skills
+confidence = sum of the per-skill values / number of must-have skills
 ```
 
-If there are no must-have skills, confidence is computed over nice-to-have skills. Result is between 0 and 1, reported as a percentage with a label: `high` at 0.75 and above, `medium` at 0.4 to 0.74, `low` below 0.4.
+If there are no must-have skills, the same rule applies over nice-to-have skills. The value is between 0 and 1. Labels: `high` at 0.75 and above, `medium` at 0.4 to 0.74, `low` below 0.4.
 
 ### 6.7 Worked example
 
@@ -480,34 +490,34 @@ Weights are starting values [PDF §6]. Before the pilot:
 
 ## 7. MCP tools
 
-Each tool is a thin wrapper. Input and output schemas are generated from type hints. Output size is capped.
+Each tool is a thin wrapper in `mcp_server/app.py` that calls one `TalentService` method. Input schemas come from type hints. The first argument of each tool is the request context, which carries the bearer-token actor.
 
-| Tool | Parameters | Service call | Result cap |
-|---|---|---|---|
-| `search_talent` | `query`, `country`, `skills`, `min_score` (default 40), `limit` (default 10, max 25) | `search.talent` | 25 results |
-| `get_profile` | `profile_id` | `profiles.get` (consented fields) | 1 profile |
-| `score_candidate` | `profile_id`, `requirement` | `scoring.score_one` | 1 result |
-| `search_opportunities` | `query` or `profile_id`, `country`, `limit` | `search.opportunities` | 25 results |
-| `get_skill_gap` | `listing_id`, `profile_id` | `scoring.gap` | 50 skills |
-| `list_skills` | `query`, `category`, `limit` (max 100) | `skills.list` | 100 skills |
-| `create_listing` | listing fields | `listings.create` | 1 listing; requires `write:listings` |
-| `record_outcome` | `match_id`, `outcome` | `matches.record_outcome` | requires `write:outcomes` |
+**Built in this release (read tools):**
 
-Prompts:
+| Tool | Parameters | Service method | Scope | Result cap |
+|---|---|---|---|---|
+| `search_talent` | `query`, `country`, `skills`, `min_score` (default 40), `limit` (default 10, max 25), `rerank` (default true) | `search_talent` | `read:candidates`, role employer, business or admin | 25 results |
+| `score_candidate` | `profile_id`, `query`, `skills`, `country` **(changed from `requirement`, to match the other tools)** | `score_candidate` | `read:candidates`, same roles | 1 result |
+| `get_profile` | `profile_id` | `get_profile` (public fields only) | `read:public` | 1 profile |
+| `search_opportunities` | `profile_id`, `country`, `min_score` (default 40), `limit` | `search_opportunities` | `read:public`, role youth or admin, caller owns the profile | 25 results |
+| `get_skill_gap` | `listing_id`, `profile_id` | `get_skill_gap` | `read:public`, caller owns the profile | all requirement skills |
+| `list_skills` | `query`, `category`, `limit` (max 100) | `list_skills` | `read:public` | 100 skills |
 
-- `shortlist_for_role(role_description)`: builds a message asking the agent to call `search_talent` and summarise the results. The role description is wrapped as data.
-- `career_path_for_profile(profile_id)`: calls `get_skill_gap` for listings of interest and presents the gap.
+`search_opportunities` takes a `profile_id` only. Matching from free text (`query`) is **not yet built**, because free text has no candidate record to score against.
 
-Resources:
+**Not built yet:**
 
-- `ypp://skills/taxonomy`
-- `ypp://countries`
-- `ypp://scoring/rubric` (returns the rubric in section 6, not the code)
+| Tool | Reason |
+|---|---|
+| `create_listing` | Needs the Postgres store and the listings write path |
+| `record_outcome` | Needs the Postgres store and the matches table |
+
+Prompts and resources from the design are not built yet.
 
 Safety rules for all tools:
 
-- Profile text in results is wrapped in a `{"untrusted": true}` field.
-- Tool results never include contact details unless the contact request is accepted.
+- Profile text in results is placed under `untrusted_text` and the response carries `"untrusted": true`.
+- Tool results never include contact details. The contact release flow is not built yet.
 - Results are capped; exceeding a cap returns the first N with `truncated: true`.
 
 ---

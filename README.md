@@ -14,7 +14,12 @@ Success is measured by **verified paid placements and six-month retention**, not
 
 ## Status
 
-This repository currently contains design documentation only. Backend and database implementation follow these documents.
+Built so far:
+
+- Scoring model, RAG engine (hard filters, hybrid candidate generation with RRF, scoring, grounded LLM rerank), and the service layer.
+- MCP server with the six read tools, bearer-token authentication, and 113 tests.
+
+Not built yet: the Django project, REST routes, the Postgres store and migrations, Celery workers, the write tools (`create_listing`, `record_outcome`), real Bedrock adapters, and OAuth. The engine runs against an in-memory store until the Postgres store exists.
 
 | Document | Purpose |
 |---|---|
@@ -70,6 +75,8 @@ The layout below is the target structure. Directories are created as the backend
 
 ## Local setup
 
+The steps below are the target setup for when the Django project and Postgres store exist. Until then, use [Running tests](#running-tests), which needs nothing else.
+
 Prerequisites: Python 3.12, Docker (for Postgres with pgvector), and Redis.
 
 ```bash
@@ -121,11 +128,18 @@ Settings come from environment variables. Secrets never go in the repository.
 
 ## Running tests
 
+The current tests need no database, Redis or AWS credentials.
+
 ```bash
 cd backend
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
 pytest -q
-pytest tests/scoring -q     # scoring regression suite, must pass before any weight change
 ```
+
+Test layout: `tests/test_scoring.py` (scoring model, including the worked example in TECHNICAL.md §6.7), `tests/test_engine.py` (filters, parser, RRF, rerank validation and grounding, RAG pipeline), `tests/test_services.py` (permissions, consent, audit), `tests/test_mcp.py` (a live HTTP MCP server called through the official client).
+
+The `mcp` package is pinned to the 1.x line, which provides the `FastMCP` import used in the design. Version 2 renamed it.
 
 ## Contributing rules
 
